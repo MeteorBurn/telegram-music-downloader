@@ -160,7 +160,6 @@ class DownloadQueue:
     def full(self) -> bool:
         """Проверить, заполнена ли очередь"""
         return self._queue.full()
-        self.logger.info("Download queue cleared")
 
 
 class RateLimiter:
