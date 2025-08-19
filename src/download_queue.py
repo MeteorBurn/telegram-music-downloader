@@ -148,6 +148,18 @@ class DownloadQueue:
         
         self._pending_tasks.clear()
         self._stats['current_size'] = 0
+    
+    def qsize(self) -> int:
+        """Получить текущий размер очереди"""
+        return self._queue.qsize()
+    
+    def empty(self) -> bool:
+        """Проверить, пуста ли очередь"""
+        return self._queue.empty()
+    
+    def full(self) -> bool:
+        """Проверить, заполнена ли очередь"""
+        return self._queue.full()
         self.logger.info("Download queue cleared")
 
 

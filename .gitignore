@@ -21,5 +21,13 @@ build/
 # Local secrets (if any, e.g., local_config.yaml)
 local_config.yaml
 
-# Downloaded Files
+# Downloaded Files and Data
 src/data
+data/
+M:/
+
+# Test files
+test_concurrent.py
+
+# Telegram sessions
+*.session

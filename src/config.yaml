@@ -17,14 +17,14 @@ download:
   max_files_per_run: 100  # Maximum files to download per run (0 = unlimited)
   
   # Многопоточное скачивание
-  concurrent_downloads: 3  # Количество одновременных скачиваний
+  concurrent_downloads: 3  # Количество одновременных скачиваний (1-5)
   max_queue_size: 100     # Максимальный размер очереди
   worker_timeout: 300     # Таймаут воркера (секунды)
   
   # Rate limiting для Telegram API
   rate_limit:
-    requests_per_second: 2  # Лимит запросов к Telegram
-    burst_size: 5          # Размер burst'а
+    requests_per_second: 2  # Лимит запросов к Telegram API
+    burst_size: 5          # Размер burst'а для пиковых нагрузок
 
 naming:
   template: "{original_name}__{message_id}"
