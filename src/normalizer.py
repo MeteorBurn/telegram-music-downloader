@@ -83,13 +83,22 @@ def remove_musical_keys(text: str) -> str:
 
 def remove_audio_tags(text: str) -> str:
     """Remove common audio tags (e.g., 320kbps, FLAC, WEB, etc.)"""
+    # Removed 'original', 'mix', 'edit', 'extended' as they can be part of mix names
     tags = [
         r'320\s?kbps', r'192\s?kbps', r'256\s?kbps', r'flac', r'web', r'cdq', r'promo',
-        r'cdm', r'cd', r'single', r'ep', r'lp', r'vinyl', r'album', r'original', r'mix', r'edit',
-        r'extended', r'full', r'clean', r'dirty', r'instrumental', r'acapella', r'remix', r'bootleg', r'cover'
+        r'cdm', r'cd', r'single', r'ep', r'lp', r'vinyl', r'album', r'full', r'clean', 
+        r'dirty', r'instrumental', r'acapella', r'remix', r'bootleg', r'cover'
     ]
     for tag in tags:
         text = re.sub(rf'\b{tag}\b', '', text, flags=re.IGNORECASE)
+    return fix_extra_spaces(text)
+
+def remove_empty_brackets(text: str) -> str:
+    """Remove empty brackets and parentheses."""
+    # Remove empty parentheses
+    text = re.sub(r'\(\s*\)', '', text)
+    # Remove empty square brackets
+    text = re.sub(r'\[\s*\]', '', text)
     return fix_extra_spaces(text)
 
 def fix_residual_characters(text: str) -> str:
@@ -113,6 +122,7 @@ def normalize_track_name(file_name: str) -> str:
     name = remove_vinyl_tags(name)
     name = remove_musical_keys(name)
     name = remove_audio_tags(name)
+    name = remove_empty_brackets(name)  # Remove empty brackets after audio tags removal
     name = fix_residual_characters(name)
     return name
 
