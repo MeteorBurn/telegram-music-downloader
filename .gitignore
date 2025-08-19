@@ -24,7 +24,6 @@ local_config.yaml
 # Downloaded Files and Data
 src/data
 data/
-M:/
 
 # Test files
 test_concurrent.py
