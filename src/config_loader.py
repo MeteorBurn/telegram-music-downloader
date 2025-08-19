@@ -101,6 +101,21 @@ class ConfigLoader:
     def get_max_files_per_run(self) -> int:
         return self._config['download'].get('max_files_per_run', 0)
     
+    def get_concurrent_downloads(self) -> int:
+        return self._config['download'].get('concurrent_downloads', 3)
+    
+    def get_max_queue_size(self) -> int:
+        return self._config['download'].get('max_queue_size', 100)
+    
+    def get_worker_timeout(self) -> int:
+        return self._config['download'].get('worker_timeout', 300)
+    
+    def get_requests_per_second(self) -> float:
+        return self._config['download'].get('rate_limit', {}).get('requests_per_second', 2.0)
+    
+    def get_burst_size(self) -> int:
+        return self._config['download'].get('rate_limit', {}).get('burst_size', 5)
+    
     def get_naming_template(self) -> str:
         return self._config.get('naming', {}).get('template', '{original_name}_{message_id}')
     

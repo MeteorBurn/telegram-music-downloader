@@ -91,7 +91,7 @@ class TelegramDownloader:
                     file_path = normalized_path
 
                 # Track downloaded file in file_tracker
-                file_hash = self.file_tracker.track_downloaded_file(media_info, str(file_path))
+                file_hash = await self.file_tracker.track_downloaded_file(media_info, str(file_path))
                 
                 self.logger.info(f"✓ Downloaded successfully: {file_path.name} {file_info} (hash: {file_hash[:8]}...)")
                 

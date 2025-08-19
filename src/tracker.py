@@ -1,6 +1,7 @@
 import json
 import hashlib
 import logging
+import asyncio
 from pathlib import Path
 from typing import Dict, Set, Optional, Any
 from datetime import datetime
@@ -117,6 +118,9 @@ class FileTracker:
         self.downloaded_files: Dict[str, Dict[str, Any]] = {}
         self.blacklisted_files: Set[int] = set()
         
+        # Thread safety
+        self._lock = asyncio.Lock()
+        
         # Load existing data
         self._load_tracker_data()
         self._ensure_tracker_dir()
@@ -191,29 +195,30 @@ class FileTracker:
             self._save_tracker_data()
             self.logger.info(f"Message {message_id} removed from blacklist")
     
-    def track_downloaded_file(self, media_info: Dict[str, Any], file_path: str) -> str:
-        """Track downloaded file and return its hash"""
-        file_hash = self._calculate_file_hash(file_path)
-        
-        # Calculate file size in MB for storage
-        file_size_mb = media_info.get('file_size', 0) / (1024 * 1024)
-        
-        # Store file information
-        self.downloaded_files[file_hash] = {
-            'message_id': media_info['message_id'],
-            'channel_id': media_info.get('channel_id', ''),
-            'filename': media_info['filename'],
-            'file_path': str(file_path),
-            'file_size': media_info['file_size'],
-            'file_size_mb': round(file_size_mb, 1),
-            'mime_type': media_info['mime_type'],
-            'download_date': datetime.now().isoformat(),
-            'publish_date': media_info['publish_date'].isoformat() if media_info['publish_date'] else None
-        }
-        
-        self._save_tracker_data()
-        self.logger.info(f"File tracked: {media_info['filename']} -> {file_hash}")
-        return file_hash
+    async def track_downloaded_file(self, media_info: Dict[str, Any], file_path: str) -> str:
+        """Track downloaded file and return its hash (thread-safe)"""
+        async with self._lock:
+            file_hash = self._calculate_file_hash(file_path)
+            
+            # Calculate file size in MB for storage
+            file_size_mb = media_info.get('file_size', 0) / (1024 * 1024)
+            
+            # Store file information
+            self.downloaded_files[file_hash] = {
+                'message_id': media_info['message_id'],
+                'channel_id': media_info.get('channel_id', ''),
+                'filename': media_info['filename'],
+                'file_path': str(file_path),
+                'file_size': media_info['file_size'],
+                'file_size_mb': round(file_size_mb, 1),
+                'mime_type': media_info['mime_type'],
+                'download_date': datetime.now().isoformat(),
+                'publish_date': media_info['publish_date'].isoformat() if media_info['publish_date'] else None
+            }
+            
+            self._save_tracker_data()
+            self.logger.info(f"File tracked: {media_info['filename']} -> {file_hash}")
+            return file_hash
     
     def _calculate_file_hash(self, file_path: str) -> str:
         """Calculate MD5 hash of file"""

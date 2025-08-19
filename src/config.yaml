@@ -1,20 +1,30 @@
 # Telegram Music Downloader Configuration
 
 telegram:
-  api_id: API ID  # Your API ID from my.telegram.org
-  api_hash: "API Hash"  # Your API Hash
+  api_id: 12345678  # Your API ID from my.telegram.org (example)
+  api_hash: "your_api_hash_here"  # Your API Hash (example)
   session_name: "session"
   two_factor_auth: true  # Enable if you have 2FA
 
 channels:
   - -1001234567890  # Private channel ID (example)
-  - @musicchannel    # Public channel username (example)
+  - "@musicchannel"    # Public channel username (example)
   - -1009876543210  # Private group ID (example)
 
 download:
   output_dir: "./data/downloads"
   timeout_between_messages: 0.3  # Pause between messages (seconds)
   max_files_per_run: 100  # Maximum files to download per run (0 = unlimited)
+  
+  # Многопоточное скачивание
+  concurrent_downloads: 3  # Количество одновременных скачиваний
+  max_queue_size: 100     # Максимальный размер очереди
+  worker_timeout: 300     # Таймаут воркера (секунды)
+  
+  # Rate limiting для Telegram API
+  rate_limit:
+    requests_per_second: 2  # Лимит запросов к Telegram
+    burst_size: 5          # Размер burst'а
 
 naming:
   template: "{original_name}__{message_id}"

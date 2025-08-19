@@ -19,6 +19,8 @@ from message_parser import create_message_parser
 from media_filter import create_media_filter
 from tracker import create_message_tracker, create_file_tracker
 from downloader import create_downloader
+from download_coordinator import create_download_coordinator
+from download_monitor import create_download_monitor, ProgressDisplay
 
 
 class TelegramMusicDownloader:
@@ -40,6 +42,8 @@ class TelegramMusicDownloader:
         self.client = None
         self.parser = None
         self.downloader = None
+        self.download_coordinator = None
+        self.download_monitor = None
     
     async def initialize_client(self):
         """Initialize Telegram client and related components"""
@@ -54,10 +58,14 @@ class TelegramMusicDownloader:
         self.parser = create_message_parser(self.client.get_client(), self.config)
         self.downloader = create_downloader(self.client.get_client(), self.config, self.file_tracker)
         
+        # Initialize download coordinator and monitor
+        self.download_coordinator = create_download_coordinator(self.downloader, self.config)
+        self.download_monitor = create_download_monitor(self.download_coordinator)
+        
         self.logger.info("Client initialized successfully")
 
     async def run_download_session(self, max_files: int = 0) -> Dict[str, Any]:
-        """Run complete download session for all configured channels"""
+        """Run complete download session with concurrent downloads"""
         session_results = {
             'channels_processed': 0,
             'total_files_found': 0,
@@ -86,35 +94,59 @@ class TelegramMusicDownloader:
             if config_max_files > 0:
                 max_files = min(max_files, config_max_files) if max_files > 0 else config_max_files
             
-            self.logger.info(f"Processing {len(entities)} channels, max files: {max_files if max_files > 0 else 'unlimited'}")
+            self.logger.info(f"Processing {len(entities)} channels with {self.config.get_concurrent_downloads()} concurrent downloads")
+            self.logger.info(f"Max files: {max_files if max_files > 0 else 'unlimited'}")
             
-            # Process each channel
-            files_downloaded_total = 0
-            for channel_name, entity in entities:
-                # Check overall download limit for all channels
-                if max_files > 0 and files_downloaded_total >= max_files:
-                    self.logger.info(f"Reached overall maximum files limit ({max_files}), stopping")
-                    break
+            # Start download coordinator
+            await self.download_coordinator.start()
+            
+            # Start monitoring (optional, can be disabled for cleaner logs)
+            # await self.download_monitor.start_monitoring()
+            
+            try:
+                # Process all channels and add tasks to queue
+                files_queued_total = 0
+                for channel_name, entity in entities:
+                    # Check overall download limit
+                    if max_files > 0 and files_queued_total >= max_files:
+                        self.logger.info(f"Reached overall maximum files limit ({max_files}), stopping channel processing")
+                        break
+                    
+                    # Calculate remaining files for this channel
+                    remaining_for_channel = max_files - files_queued_total if max_files > 0 else 0
+                    
+                    # Process channel and add tasks to queue
+                    channel_result = await self._process_channel_concurrent(
+                        channel_name, 
+                        entity, 
+                        remaining_for_channel
+                    )
+                    
+                    session_results['channels_details'].append(channel_result)
+                    session_results['channels_processed'] += 1
+                    session_results['total_files_found'] += channel_result['files_found']
+                    session_results['total_messages_processed'] += channel_result['messages_processed']
+                    
+                    files_queued_total += channel_result['files_queued']
                 
-                # Calculate remaining files to download for the current channel session
-                remaining_for_channel = max_files - files_downloaded_total if max_files > 0 else 0 # Limit for this channel processing iteration
+                # Wait for all downloads to complete
+                self.logger.info("All channels processed, waiting for downloads to complete...")
+                await self.download_coordinator.wait_completion()
                 
-                # Process channel
-                channel_result = await self._process_channel(
-                    channel_name, 
-                    entity, 
-                    remaining_for_channel # Pass the calculated remaining files for this specific channel run
-                )
+                # Get final statistics from coordinator
+                final_summary = self.download_coordinator.get_session_summary()
+                session_results.update({
+                    'total_files_downloaded': final_summary['files_completed'],
+                    'total_files_failed': final_summary['files_failed'],
+                    'total_files_skipped': final_summary['files_queued'] - final_summary['files_completed'] - final_summary['files_failed']
+                })
                 
-                session_results['channels_details'].append(channel_result)
-                session_results['channels_processed'] += 1
-                session_results['total_files_found'] += channel_result['files_found']
-                session_results['total_files_downloaded'] += channel_result['files_downloaded']
-                session_results['total_files_skipped'] += channel_result['files_skipped']
-                session_results['total_files_failed'] += channel_result['files_failed']
-                session_results['total_messages_processed'] += channel_result['messages_processed']
+            finally:
+                # Stop monitoring
+                # await self.download_monitor.stop_monitoring()
                 
-                files_downloaded_total += channel_result['files_downloaded']
+                # Stop coordinator
+                await self.download_coordinator.stop()
             
             return session_results
             
@@ -122,6 +154,101 @@ class TelegramMusicDownloader:
             self.logger.error(f"Error during download session: {e}")
             raise
     
+    async def _process_channel_concurrent(self, channel_name: str, entity, max_files: int = 0) -> Dict[str, Any]:
+        """Process single channel and add tasks to download queue"""
+        self.logger.info(f"Processing channel: {channel_name} ({entity.title})")
+        
+        # Get channel ID
+        channel_id = str(entity.id)
+        
+        channel_result = {
+            'channel_name': channel_name,
+            'channel_title': entity.title,
+            'channel_id': channel_id,
+            'files_found': 0,
+            'files_queued': 0,
+            'messages_processed': 0,
+            'last_processed_id': None
+        }
+        
+        try:
+            # Get the last processed ID for this channel from message_tracker
+            last_processed_id = self.message_tracker.get_last_processed_id(channel_id)
+            if last_processed_id:
+                self.logger.info(f"Continuing from last processed message ID: {last_processed_id}")
+            
+            # Get channel statistics first
+            stats = await self.parser.get_channel_stats(entity)
+            if stats:
+                self.logger.info(f"Channel stats: {stats['media_messages']} media files in last 100 messages")
+            
+            # Counters for controlling the limit within this channel processing
+            files_queued_in_channel = 0
+            messages_processed = 0
+            
+            # Process messages sequentially from oldest to newest, starting after last_processed_id
+            async for message_info in self.parser.parse_messages(entity, last_processed_id=last_processed_id):
+                messages_processed += 1
+                channel_result['messages_processed'] += 1
+                
+                # Update the last processed message ID and mark the message as processed
+                message_id = message_info['message_id']
+                self.message_tracker.mark_message_processed(channel_id, message_id)
+                channel_result['last_processed_id'] = message_id
+                
+                # If the message does not contain media, skip file processing
+                if not message_info.get('has_media', False):
+                    self.logger.debug(f"Skipping message {message_id} - no media")
+                    continue
+                
+                # Check for all required fields to process media
+                if 'filename' not in message_info or 'file_size' not in message_info or 'type' not in message_info:
+                    self.logger.debug(f"Skipping message {message_id} - missing required media fields")
+                    continue
+                
+                if self.media_filter.should_process_media(message_info):
+                    channel_result['files_found'] += 1
+                    
+                    # Prepare file info string (duration and size) for logging
+                    file_info_log_str = ""
+                    duration_str = ""
+                    if message_info.get('audio_meta') and message_info['audio_meta'].get('duration'):
+                        duration = message_info['audio_meta']['duration']
+                        minutes, seconds = divmod(duration, 60)
+                        duration_str = f"[{minutes:02d}:{seconds:02d}]"
+                    
+                    file_size_mb = message_info['file_size'] / (1024 * 1024)
+                    size_str = f"[{file_size_mb:.1f} MB]"
+                    
+                    if duration_str and size_str:
+                        file_info_log_str = f"{duration_str} {size_str}"
+                    else:
+                        file_info_log_str = f"{duration_str}{size_str}"
+                    
+                    # Add task to download queue instead of downloading immediately
+                    success = await self.download_coordinator.add_download_task(message_info, file_info_log_str)
+                    
+                    if success:
+                        channel_result['files_queued'] += 1
+                        files_queued_in_channel += 1
+                        self.logger.info(f"Queued for download: {message_info['filename']} {file_info_log_str}")
+                    else:
+                        self.logger.warning(f"Failed to queue: {message_info['filename']}")
+                    
+                    # Check if the queue limit for this channel processing iteration has been reached
+                    if max_files > 0 and files_queued_in_channel >= max_files:
+                        self.logger.info(f"Reached file limit ({max_files}) for channel {channel_name} in this run.")
+                        break
+            
+            self.logger.info(f"Channel {channel_name} processed: "
+                        f"{channel_result['files_queued']} files queued, "
+                        f"{channel_result['messages_processed']} messages processed")
+            
+            return channel_result
+            
+        except Exception as e:
+            self.logger.error(f"Error processing channel {channel_name}: {e}")
+            raise
 
     async def _process_channel(self, channel_name: str, entity, max_files: int = 0) -> Dict[str, Any]:
         """Process single channel - parse, filter, and download files"""
@@ -244,6 +371,11 @@ class TelegramMusicDownloader:
             print(f"Download directory: {download_stats['download_directory']}")
             print(f"Naming template: {download_stats['naming_template']}")
         
+        # Concurrent download settings
+        print(f"Concurrent downloads: {self.config.get_concurrent_downloads()}")
+        print(f"Max queue size: {self.config.get_max_queue_size()}")
+        print(f"Rate limit: {self.config.get_requests_per_second()} req/sec")
+        
         # Filter statistics
         filter_summary = self.media_filter.get_filter_summary()
         print(f"File types filter: {filter_summary['file_types']}")
@@ -251,6 +383,14 @@ class TelegramMusicDownloader:
         print(f"Size filter: {filter_summary['size_range_mb']['min']}-{filter_summary['size_range_mb']['max']} MB")
         
         print("=" * 30)
+    
+    async def show_progress(self):
+        """Show current download progress"""
+        if not self.download_coordinator:
+            print("Download coordinator not initialized")
+            return
+        
+        ProgressDisplay.show_progress_once(self.download_coordinator)
     
     async def cleanup_tracker(self) -> int:
         """Clean up tracker from missing files"""
@@ -273,6 +413,8 @@ async def main():
     parser.add_argument("--max-files", "-m", type=int, default=0, help="Maximum files to download (0 = unlimited)")
     parser.add_argument("--stats", "-s", action="store_true", help="Show statistics only")
     parser.add_argument("--cleanup", action="store_true", help="Clean up tracker from missing files")
+    parser.add_argument("--progress", "-p", action="store_true", help="Show current download progress")
+    parser.add_argument("--workers", "-w", type=int, help="Override number of concurrent workers")
     
     args = parser.parse_args()
     
@@ -287,6 +429,11 @@ async def main():
         # Initialize downloader
         downloader = TelegramMusicDownloader(args.config)
         
+        # Override workers if specified
+        if args.workers:
+            downloader.config._config['download']['concurrent_downloads'] = args.workers
+            print(f"Using {args.workers} concurrent workers (overridden from command line)")
+        
         # Handle different modes
         if args.stats:
             # Show statistics only
@@ -295,6 +442,10 @@ async def main():
             # Cleanup tracker only
             removed = await downloader.cleanup_tracker()
             print(f"Cleaned up {removed} missing file entries")
+        elif args.progress:
+            # Show progress only (requires coordinator to be initialized)
+            await downloader.initialize_client()
+            await downloader.show_progress()
         else:
             # Normal download session
             await downloader.initialize_client()
@@ -313,6 +464,10 @@ async def main():
             print(f"Files downloaded: {results['total_files_downloaded']}")
             print(f"Files skipped: {results['total_files_skipped']}")
             print(f"Files failed: {results['total_files_failed']}")
+            
+            # Show detailed summary from coordinator
+            if downloader.download_coordinator:
+                downloader.download_monitor.display_summary()
             
     except KeyboardInterrupt:
         print("\nInterrupted by user. Exiting...")
