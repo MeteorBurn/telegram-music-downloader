@@ -15,8 +15,8 @@ class MessageTracker:
         self.logger = logging.getLogger(__name__)
         
         # Data initialization
-        self.processed_messages = set()  # set of processed message IDs for this channel
         self.last_processed_id = None  # last processed message ID
+        self.total_messages_processed = 0  # counter of processed messages
         
         # Load existing data
         self._ensure_tracker_dir()
@@ -36,15 +36,15 @@ class MessageTracker:
             with open(self.tracker_file, 'r', encoding='utf-8') as file:
                 data = json.load(file)
                 
-                # Load processed messages (list of message IDs)
-                messages = data.get('processed_messages', [])
-                self.processed_messages = set(messages)
-                
                 # Load last processed ID
                 self.last_processed_id = data.get('last_processed_id')
                 
+                # Load total messages counter
+                self.total_messages_processed = data.get('total_messages_processed', 0)
+                
                 self.logger.info(f"Loaded message tracker for channel {self.channel_id}: "
-                               f"{len(self.processed_messages)} messages tracked")
+                               f"{self.total_messages_processed} messages tracked, "
+                               f"last ID: {self.last_processed_id}")
                 
         except Exception as e:
             self.logger.error(f"Failed to load message tracker data: {e}")
@@ -53,12 +53,11 @@ class MessageTracker:
     def _save_tracker_data(self) -> None:
         """Save tracking data to JSON file"""
         try:
-            # Prepare data structure
+            # Prepare data structure (optimized - no arrays!)
             data = {
                 'channel_id': self.channel_id,
-                'processed_messages': sorted(list(self.processed_messages)),
                 'last_processed_id': self.last_processed_id,
-                'total_messages': len(self.processed_messages),
+                'total_messages_processed': self.total_messages_processed,
                 'last_updated': datetime.now().isoformat()
             }
             
@@ -75,20 +74,27 @@ class MessageTracker:
             self.logger.error(f"Failed to save message tracker data: {e}")
     
     def is_message_processed(self, message_id: int) -> bool:
-        """Check if message was already processed"""
-        return message_id in self.processed_messages
+        """
+        Check if message was already processed.
+        Note: With optimized storage, this checks if message_id <= last_processed_id.
+        This assumes sequential processing from oldest to newest.
+        """
+        if self.last_processed_id is None:
+            return False
+        return message_id <= self.last_processed_id
     
     def mark_message_processed(self, message_id: int) -> None:
         """Mark message as processed"""
-        # Add message ID to the set of processed messages
-        self.processed_messages.add(message_id)
+        # Increment counter
+        self.total_messages_processed += 1
         
         # Update last processed ID if the current one is greater
         if self.last_processed_id is None or message_id > self.last_processed_id:
             self.last_processed_id = message_id
         
         self._save_tracker_data()
-        self.logger.debug(f"Message {message_id} in channel {self.channel_id} marked as processed")
+        self.logger.debug(f"Message {message_id} in channel {self.channel_id} marked as processed "
+                         f"(total: {self.total_messages_processed})")
     
     def get_last_processed_id(self) -> Optional[int]:
         """Get last processed message ID for this channel"""
@@ -98,7 +104,7 @@ class MessageTracker:
         """Get tracker statistics"""
         return {
             'channel_id': self.channel_id,
-            'total_messages_processed': len(self.processed_messages),
+            'total_messages_processed': self.total_messages_processed,
             'last_processed_id': self.last_processed_id,
             'tracker_file_path': str(self.tracker_file),
             'tracker_file_exists': self.tracker_file.exists()
@@ -203,6 +209,13 @@ class FileTracker:
             # Calculate file size in MB for storage
             file_size_mb = media_info.get('file_size', 0) / (1024 * 1024)
             
+            # Get download date from media_info or use current time
+            download_date = media_info.get('download_date', datetime.now())
+            if isinstance(download_date, datetime):
+                download_date_str = download_date.isoformat()
+            else:
+                download_date_str = download_date  # Already a string
+            
             # Store file information
             self.downloaded_files[file_hash] = {
                 'message_id': media_info['message_id'],
@@ -212,7 +225,7 @@ class FileTracker:
                 'file_size': media_info['file_size'],
                 'file_size_mb': round(file_size_mb, 1),
                 'mime_type': media_info['mime_type'],
-                'download_date': datetime.now().isoformat(),
+                'download_date': download_date_str,
                 'publish_date': media_info['publish_date'].isoformat() if media_info['publish_date'] else None
             }
             

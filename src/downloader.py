@@ -56,6 +56,25 @@ class TelegramDownloader:
                 skip_reason = f"File with same name already exists: {file_path}"
                 self.logger.info(f"→ Skipping file: {media_info['filename']} {file_info} - {skip_reason}")
                 
+                # If file tracker exists, check if this file is tracked
+                if file_tracker:
+                    existing_file = file_tracker.get_downloaded_file_by_message(media_info['message_id'])
+                    if not existing_file:
+                        # File exists on disk but not tracked - add to tracker
+                        self.logger.info(f"→ Adding existing file to tracker: {file_path.name}")
+                        
+                        # Get file modification time as download date
+                        file_mtime = file_path.stat().st_mtime
+                        file_download_date = datetime.fromtimestamp(file_mtime)
+                        
+                        # Create a copy of media_info with download date from file attributes
+                        media_info_with_date = media_info.copy()
+                        media_info_with_date['download_date'] = file_download_date
+                        
+                        # Track the existing file
+                        file_hash = await file_tracker.track_downloaded_file(media_info_with_date, str(file_path))
+                        self.logger.info(f"✓ File added to tracker: {file_path.name} (hash: {file_hash[:8]}...)")
+                
                 # Return info that file was skipped due to existing name
                 return {
                     'status': 'skipped',
