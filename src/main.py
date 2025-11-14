@@ -157,8 +157,8 @@ class TelegramMusicDownloader:
         """Process single channel and add tasks to download queue"""
         self.logger.info(f"Processing channel: {channel_name} ({entity.title})")
         
-        # Get channel ID
-        channel_id = str(entity.id)
+        # Get channel ID from config (use channel_name which is the original identifier from config.yaml)
+        channel_id = str(channel_name)
         channel_title = entity.title
         
         # Get or create trackers for this channel
@@ -193,7 +193,7 @@ class TelegramMusicDownloader:
             messages_processed = 0
             
             # Process messages sequentially from oldest to newest, starting after last_processed_id
-            async for message_info in self.parser.parse_messages(entity, last_processed_id=last_processed_id):
+            async for message_info in self.parser.parse_messages(entity, last_processed_id=last_processed_id, config_channel_id=channel_id):
                 messages_processed += 1
                 channel_result['messages_processed'] += 1
                 
@@ -264,8 +264,8 @@ class TelegramMusicDownloader:
         """Process single channel - parse, filter, and download files"""
         self.logger.info(f"Processing channel: {channel_name} ({entity.title})")
         
-        # Get channel ID
-        channel_id = str(entity.id)
+        # Get channel ID from config (use channel_name which is the original identifier from config.yaml)
+        channel_id = str(channel_name)
         channel_title = entity.title
         
         # Get or create trackers for this channel
@@ -304,7 +304,7 @@ class TelegramMusicDownloader:
             messages_processed = 0
             
             # Process messages sequentially from oldest to newest, starting after last_processed_id
-            async for message_info in self.parser.parse_messages(entity, last_processed_id=last_processed_id):
+            async for message_info in self.parser.parse_messages(entity, last_processed_id=last_processed_id, config_channel_id=channel_id):
                 messages_processed += 1
                 channel_result['messages_processed'] += 1
                 
