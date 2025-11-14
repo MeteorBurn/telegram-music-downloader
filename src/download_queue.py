@@ -50,9 +50,9 @@ class DownloadQueue:
                 self.logger.debug(f"Task {task_id} already exists, skipping")
                 return False
             
-            # Устанавливаем приоритет на основе размера файла (меньшие файлы - выше приоритет)
-            file_size_mb = task.media_info.get('file_size', 0) / (1024 * 1024)
-            task.priority = int(file_size_mb)  # Меньшие файлы будут скачиваться первыми
+            # Устанавливаем приоритет на основе ID сообщения (порядок добавления в очередь)
+            # Файлы будут скачиваться в том порядке, в котором они были добавлены
+            task.priority = task.media_info.get('message_id', 0)
             
             await self._queue.put(task)
             self._pending_tasks[task_id] = task
