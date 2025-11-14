@@ -17,7 +17,7 @@ from client import create_client
 from session_manager import create_session_manager
 from message_parser import create_message_parser
 from media_filter import create_media_filter
-from tracker import create_message_tracker, create_file_tracker
+from tracker import TrackerManager
 from downloader import create_downloader
 from download_coordinator import create_download_coordinator
 from download_monitor import create_download_monitor, ProgressDisplay
@@ -34,8 +34,7 @@ class TelegramMusicDownloader:
         
         # Initialize components
         self.session_manager = create_session_manager(self.config)
-        self.message_tracker = create_message_tracker(self.config)
-        self.file_tracker = create_file_tracker(self.config)
+        self.tracker_manager = TrackerManager(self.config.get_download_dir())
         self.media_filter = create_media_filter(self.config)
         
         # Components to be initialized after client connection
@@ -54,9 +53,9 @@ class TelegramMusicDownloader:
         if not self.client.client.is_connected():
             raise RuntimeError("Failed to connect to Telegram")
         
-        # Initialize parser and downloader
+        # Initialize parser and downloader (without file_tracker, it will be passed in media_info)
         self.parser = create_message_parser(self.client.get_client(), self.config)
-        self.downloader = create_downloader(self.client.get_client(), self.config, self.file_tracker)
+        self.downloader = create_downloader(self.client.get_client(), self.config, file_tracker=None)
         
         # Initialize download coordinator and monitor
         self.download_coordinator = create_download_coordinator(self.downloader, self.config)
@@ -160,10 +159,17 @@ class TelegramMusicDownloader:
         
         # Get channel ID
         channel_id = str(entity.id)
+        channel_title = entity.title
+        
+        # Get or create trackers for this channel
+        message_tracker, file_tracker = self.tracker_manager.get_or_create_trackers(channel_title, channel_id)
+        
+        # Get channel-specific download directory
+        channel_download_dir = self.tracker_manager.get_channel_download_dir(channel_title, channel_id)
         
         channel_result = {
             'channel_name': channel_name,
-            'channel_title': entity.title,
+            'channel_title': channel_title,
             'channel_id': channel_id,
             'files_found': 0,
             'files_queued': 0,
@@ -173,7 +179,7 @@ class TelegramMusicDownloader:
         
         try:
             # Get the last processed ID for this channel from message_tracker
-            last_processed_id = self.message_tracker.get_last_processed_id(channel_id)
+            last_processed_id = message_tracker.get_last_processed_id()
             if last_processed_id:
                 self.logger.info(f"Continuing from last processed message ID: {last_processed_id}")
             
@@ -193,7 +199,7 @@ class TelegramMusicDownloader:
                 
                 # Update the last processed message ID and mark the message as processed
                 message_id = message_info['message_id']
-                self.message_tracker.mark_message_processed(channel_id, message_id)
+                message_tracker.mark_message_processed(message_id)
                 channel_result['last_processed_id'] = message_id
                 
                 # If the message does not contain media, skip file processing
@@ -208,6 +214,10 @@ class TelegramMusicDownloader:
                 
                 if self.media_filter.should_process_media(message_info):
                     channel_result['files_found'] += 1
+                    
+                    # Add channel-specific information to media_info
+                    message_info['file_tracker'] = file_tracker
+                    message_info['download_dir'] = str(channel_download_dir)
                     
                     # Prepare file info string (duration and size) for logging
                     file_info_log_str = ""
@@ -256,10 +266,17 @@ class TelegramMusicDownloader:
         
         # Get channel ID
         channel_id = str(entity.id)
+        channel_title = entity.title
+        
+        # Get or create trackers for this channel
+        message_tracker, file_tracker = self.tracker_manager.get_or_create_trackers(channel_title, channel_id)
+        
+        # Get channel-specific download directory
+        channel_download_dir = self.tracker_manager.get_channel_download_dir(channel_title, channel_id)
         
         channel_result = {
             'channel_name': channel_name,
-            'channel_title': entity.title,
+            'channel_title': channel_title,
             'channel_id': channel_id,
             'files_found': 0,
             'files_downloaded': 0,
@@ -272,7 +289,7 @@ class TelegramMusicDownloader:
         
         try:
             # Get the last processed ID for this channel from message_tracker
-            last_processed_id = self.message_tracker.get_last_processed_id(channel_id)
+            last_processed_id = message_tracker.get_last_processed_id()
             if last_processed_id:
                 self.logger.info(f"Continuing from last processed message ID: {last_processed_id}")
             
@@ -293,7 +310,7 @@ class TelegramMusicDownloader:
                 
                 # Update the last processed message ID and mark the message as processed
                 message_id = message_info['message_id']
-                self.message_tracker.mark_message_processed(channel_id, message_id)
+                message_tracker.mark_message_processed(message_id)
                 channel_result['last_processed_id'] = message_id
                 
                 # If the message does not contain media, skip file processing
@@ -308,6 +325,10 @@ class TelegramMusicDownloader:
                 
                 if self.media_filter.should_process_media(message_info):
                     channel_result['files_found'] += 1
+                    
+                    # Add channel-specific information to media_info
+                    message_info['file_tracker'] = file_tracker
+                    message_info['download_dir'] = str(channel_download_dir)
                     
                     # Prepare file info string (duration and size) for logging
                     file_info_log_str = ""
@@ -360,25 +381,37 @@ class TelegramMusicDownloader:
         """Display current statistics"""
         print("\n=== Download Statistics ===")
         
-        # Get file tracker statistics
-        file_stats = self.file_tracker.get_statistics()
-        print(f"Total downloaded files: {file_stats['total_downloaded_files']}")
-        print(f"Total blacklisted files: {file_stats['total_blacklisted_files']}")
+        # Per-channel statistics
+        if self.tracker_manager.file_trackers:
+            print("\nPer-Channel Statistics:")
+            total_downloaded = 0
+            total_blacklisted = 0
+            for channel_id, file_tracker in self.tracker_manager.file_trackers.items():
+                file_stats = file_tracker.get_statistics()
+                total_downloaded += file_stats['total_downloaded_files']
+                total_blacklisted += file_stats['total_blacklisted_files']
+                print(f"  Channel {channel_id}: {file_stats['total_downloaded_files']} files, "
+                      f"{file_stats['total_blacklisted_files']} blacklisted")
+            
+            print(f"\nTotal downloaded files (all channels): {total_downloaded}")
+            print(f"Total blacklisted files (all channels): {total_blacklisted}")
+        else:
+            print("No channels processed yet")
         
         # Download statistics
         if self.downloader:
             download_stats = self.downloader.get_download_statistics()
-            print(f"Download directory: {download_stats['download_directory']}")
+            print(f"\nBase download directory: {download_stats['download_directory']}")
             print(f"Naming template: {download_stats['naming_template']}")
         
         # Concurrent download settings
-        print(f"Concurrent downloads: {self.config.get_concurrent_downloads()}")
+        print(f"\nConcurrent downloads: {self.config.get_concurrent_downloads()}")
         print(f"Max queue size: {self.config.get_max_queue_size()}")
         print(f"Rate limit: {self.config.get_requests_per_second()} req/sec")
         
         # Filter statistics
         filter_summary = self.media_filter.get_filter_summary()
-        print(f"File types filter: {filter_summary['file_types']}")
+        print(f"\nFile types filter: {filter_summary['file_types']}")
         print(f"Format filter: {filter_summary['allowed_formats']}")
         print(f"Size filter: {filter_summary['size_range_mb']['min']}-{filter_summary['size_range_mb']['max']} MB")
         
@@ -394,10 +427,17 @@ class TelegramMusicDownloader:
     
     async def cleanup_tracker(self) -> int:
         """Clean up tracker from missing files"""
-        self.logger.info("Cleaning up tracker...")
-        removed_count = self.file_tracker.cleanup_missing_files()
-        self.logger.info(f"Removed {removed_count} missing file entries from tracker")
-        return removed_count
+        self.logger.info("Cleaning up trackers for all channels...")
+        total_removed = 0
+        
+        for channel_id, file_tracker in self.tracker_manager.file_trackers.items():
+            removed_count = file_tracker.cleanup_missing_files()
+            if removed_count > 0:
+                self.logger.info(f"Channel {channel_id}: Removed {removed_count} missing file entries")
+                total_removed += removed_count
+        
+        self.logger.info(f"Total removed {total_removed} missing file entries from all trackers")
+        return total_removed
     
     async def close(self):
         """Close connections and cleanup"""

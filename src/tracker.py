@@ -3,23 +3,24 @@ import hashlib
 import logging
 import asyncio
 from pathlib import Path
-from typing import Dict, Set, Optional, Any
+from typing import Dict, Set, Optional, Any, Union
 from datetime import datetime
 
 
 class MessageTracker:
-    """Tracks processed message IDs for each channel"""
-    def __init__(self, tracker_file: str = "./data/message_tracker.json"):
+    """Tracks processed message IDs for a specific channel"""
+    def __init__(self, tracker_file: str = "./data/message_tracker.json", channel_id: str = None):
         self.tracker_file = Path(tracker_file)
+        self.channel_id = str(channel_id) if channel_id else None
         self.logger = logging.getLogger(__name__)
         
         # Data initialization
-        self.processed_messages = {}  # channel id -> set of processed messages
-        self.last_processed_id = {}  # channel id -> last processed id
+        self.processed_messages = set()  # set of processed message IDs for this channel
+        self.last_processed_id = None  # last processed message ID
         
         # Load existing data
-        self._load_tracker_data()
         self._ensure_tracker_dir()
+        self._load_tracker_data()
     
     def _ensure_tracker_dir(self) -> None:
         """Create tracker directory if it doesn't exist"""
@@ -28,30 +29,22 @@ class MessageTracker:
     def _load_tracker_data(self) -> None:
         """Load tracking data from JSON file"""
         if not self.tracker_file.exists():
-            self.logger.info("Message tracker file not found, starting fresh")
+            self.logger.info(f"Message tracker file not found, starting fresh for channel {self.channel_id}")
             return
         
         try:
             with open(self.tracker_file, 'r', encoding='utf-8') as file:
                 data = json.load(file)
                 
-                # Load processed messages for each channel
-                for channel_id, messages in data.items():
-                    # Convert channel IDs to strings for consistency
-                    channel_id_str = str(channel_id)
-                    
-                    # Convert list of message IDs to set for fast lookup
-                    self.processed_messages[channel_id_str] = set(messages)
-                    
-                    # Set last processed ID as the maximum from the set
-                    if messages:
-                        self.last_processed_id[channel_id_str] = max(messages)
+                # Load processed messages (list of message IDs)
+                messages = data.get('processed_messages', [])
+                self.processed_messages = set(messages)
                 
-                channel_count = len(self.processed_messages)
-                total_messages = sum(len(msgs) for msgs in self.processed_messages.values())
+                # Load last processed ID
+                self.last_processed_id = data.get('last_processed_id')
                 
-                self.logger.info(f"Loaded message tracker: {channel_count} channels, "
-                               f"{total_messages} total messages tracked")
+                self.logger.info(f"Loaded message tracker for channel {self.channel_id}: "
+                               f"{len(self.processed_messages)} messages tracked")
                 
         except Exception as e:
             self.logger.error(f"Failed to load message tracker data: {e}")
@@ -60,58 +53,63 @@ class MessageTracker:
     def _save_tracker_data(self) -> None:
         """Save tracking data to JSON file"""
         try:
-            # Convert sets to lists for JSON serialization
-            # Structure: channel_id -> [message_id1, message_id2, ...]
-            processed_messages_json = {}
-            for channel_id, messages in self.processed_messages.items():
-                processed_messages_json[channel_id] = sorted(list(messages))
+            # Prepare data structure
+            data = {
+                'channel_id': self.channel_id,
+                'processed_messages': sorted(list(self.processed_messages)),
+                'last_processed_id': self.last_processed_id,
+                'total_messages': len(self.processed_messages),
+                'last_updated': datetime.now().isoformat()
+            }
             
             # Write to a temporary file
             temp_file = self.tracker_file.with_suffix('.tmp')
             with open(temp_file, 'w', encoding='utf-8') as file:
-                json.dump(processed_messages_json, file, indent=2, ensure_ascii=False)
+                json.dump(data, file, indent=2, ensure_ascii=False)
             
             # Replace the original file
             temp_file.replace(self.tracker_file)
-            self.logger.debug("Message tracker data saved successfully")
+            self.logger.debug(f"Message tracker data saved successfully for channel {self.channel_id}")
             
         except Exception as e:
             self.logger.error(f"Failed to save message tracker data: {e}")
     
-    def is_message_processed(self, channel_id: str, message_id: int) -> bool:
+    def is_message_processed(self, message_id: int) -> bool:
         """Check if message was already processed"""
-        channel_id_str = str(channel_id)
-        if channel_id_str not in self.processed_messages:
-            return False
-        return message_id in self.processed_messages[channel_id_str]
+        return message_id in self.processed_messages
     
-    def mark_message_processed(self, channel_id: str, message_id: int) -> None:
+    def mark_message_processed(self, message_id: int) -> None:
         """Mark message as processed"""
-        channel_id_str = str(channel_id)
-        if channel_id_str not in self.processed_messages:
-            self.processed_messages[channel_id_str] = set()
-        
-        # Add message ID to the set of processed for this channel
-        self.processed_messages[channel_id_str].add(message_id)
+        # Add message ID to the set of processed messages
+        self.processed_messages.add(message_id)
         
         # Update last processed ID if the current one is greater
-        current_last = self.last_processed_id.get(channel_id_str, 0)
-        if message_id > current_last:
-            self.last_processed_id[channel_id_str] = message_id
+        if self.last_processed_id is None or message_id > self.last_processed_id:
+            self.last_processed_id = message_id
         
         self._save_tracker_data()
-        self.logger.debug(f"Message {message_id} in channel {channel_id_str} marked as processed")
+        self.logger.debug(f"Message {message_id} in channel {self.channel_id} marked as processed")
     
-    def get_last_processed_id(self, channel_id: str) -> Optional[int]:
-        """Get last processed message ID for a channel"""
-        channel_id_str = str(channel_id)
-        return self.last_processed_id.get(channel_id_str)
+    def get_last_processed_id(self) -> Optional[int]:
+        """Get last processed message ID for this channel"""
+        return self.last_processed_id
+    
+    def get_statistics(self) -> Dict[str, Any]:
+        """Get tracker statistics"""
+        return {
+            'channel_id': self.channel_id,
+            'total_messages_processed': len(self.processed_messages),
+            'last_processed_id': self.last_processed_id,
+            'tracker_file_path': str(self.tracker_file),
+            'tracker_file_exists': self.tracker_file.exists()
+        }
 
 
 class FileTracker:
-    """Tracks downloaded files information"""
-    def __init__(self, tracker_file: str = "./data/file_tracker.json"):
+    """Tracks downloaded files information for a specific channel"""
+    def __init__(self, tracker_file: str = "./data/file_tracker.json", channel_id: str = None):
         self.tracker_file = Path(tracker_file)
+        self.channel_id = str(channel_id) if channel_id else None
         self.logger = logging.getLogger(__name__)
         
         # Initialize tracking data
@@ -122,8 +120,8 @@ class FileTracker:
         self._lock = asyncio.Lock()
         
         # Load existing data
-        self._load_tracker_data()
         self._ensure_tracker_dir()
+        self._load_tracker_data()
     
     def _ensure_tracker_dir(self) -> None:
         """Create tracker directory if it doesn't exist"""
@@ -132,7 +130,7 @@ class FileTracker:
     def _load_tracker_data(self) -> None:
         """Load tracking data from JSON file"""
         if not self.tracker_file.exists():
-            self.logger.info("File tracker file not found, starting fresh")
+            self.logger.info(f"File tracker file not found, starting fresh for channel {self.channel_id}")
             return
         
         try:
@@ -145,7 +143,7 @@ class FileTracker:
                 # Load blacklisted file IDs
                 self.blacklisted_files = set(data.get('blacklisted_files', []))
                 
-                self.logger.info(f"Loaded file tracker: "
+                self.logger.info(f"Loaded file tracker for channel {self.channel_id}: "
                                f"{len(self.downloaded_files)} downloaded, "
                                f"{len(self.blacklisted_files)} blacklisted")
                 
@@ -157,8 +155,10 @@ class FileTracker:
         """Save tracking data to JSON file"""
         try:
             data = {
+                'channel_id': self.channel_id,
                 'downloaded_files': self.downloaded_files,
                 'blacklisted_files': list(self.blacklisted_files),
+                'total_files': len(self.downloaded_files),
                 'last_updated': datetime.now().isoformat()
             }
             
@@ -232,25 +232,23 @@ class FileTracker:
             self.logger.error(f"Failed to calculate hash for {file_path}: {e}")
             return ""
     
-    def get_downloaded_file_by_message(self, channel_id: str, message_id: int) -> Optional[Dict[str, Any]]:
-        """Find downloaded file by channel ID and message ID"""
-        channel_id_str = str(channel_id)
+    def get_downloaded_file_by_message(self, message_id: int) -> Optional[Dict[str, Any]]:
+        """Find downloaded file by message ID"""
         for file_hash, file_info in self.downloaded_files.items():
-            if file_info['message_id'] == message_id and file_info.get('channel_id', '') == channel_id_str:
+            if file_info['message_id'] == message_id:
                 return {**file_info, 'file_hash': file_hash}
         return None
     
     def should_skip_file(self, media_info: Dict[str, Any]) -> tuple[bool, str]:
         """Check if file should be skipped (already blacklisted or already downloaded)"""
         message_id = media_info['message_id']
-        channel_id = media_info.get('channel_id', '')
         
         # Check blacklist first
         if self.is_file_blacklisted(message_id):
             return True, "File is blacklisted"
         
         # Check if file already downloaded
-        existing_file = self.get_downloaded_file_by_message(channel_id, message_id)
+        existing_file = self.get_downloaded_file_by_message(message_id)
         if existing_file:
             file_path = Path(existing_file['file_path'])
             if file_path.exists():
@@ -265,6 +263,7 @@ class FileTracker:
     def get_statistics(self) -> Dict[str, Any]:
         """Get tracker statistics"""
         return {
+            'channel_id': self.channel_id,
             'total_downloaded_files': len(self.downloaded_files),
             'total_blacklisted_files': len(self.blacklisted_files),
             'tracker_file_path': str(self.tracker_file),
@@ -294,27 +293,64 @@ class FileTracker:
         return removed_count
 
 
-def create_message_tracker(config_loader=None) -> MessageTracker:
-    """Create message tracker instance"""
-    if config_loader:
-        # Use data directory from config
-        download_dir = Path(config_loader.get_download_dir())
-        base_dir = download_dir.parent
-        message_tracker_file = base_dir / "message_tracker.json"
-    else:
-        message_tracker_file = "./data/message_tracker.json"
-    
-    return MessageTracker(str(message_tracker_file))
+def create_message_tracker(tracker_file: str, channel_id: str) -> MessageTracker:
+    """Create message tracker instance for a specific channel"""
+    return MessageTracker(tracker_file, channel_id)
 
 
-def create_file_tracker(config_loader=None) -> FileTracker:
-    """Create file tracker instance"""
-    if config_loader:
-        # Use data directory from config
-        download_dir = Path(config_loader.get_download_dir())
-        base_dir = download_dir.parent
-        file_tracker_file = base_dir / "file_tracker.json"
-    else:
-        file_tracker_file = "./data/file_tracker.json"
+def create_file_tracker(tracker_file: str, channel_id: str) -> FileTracker:
+    """Create file tracker instance for a specific channel"""
+    return FileTracker(tracker_file, channel_id)
+
+
+class TrackerManager:
+    """Manages per-channel trackers"""
+    def __init__(self, base_download_dir: str):
+        self.base_download_dir = Path(base_download_dir)
+        self.message_trackers: Dict[str, MessageTracker] = {}
+        self.file_trackers: Dict[str, FileTracker] = {}
+        self.logger = logging.getLogger(__name__)
     
-    return FileTracker(str(file_tracker_file))
+    def get_or_create_trackers(self, channel_title: str, channel_id: Union[str, int]) -> tuple[MessageTracker, FileTracker]:
+        """
+        Get or create trackers for a specific channel
+        
+        Args:
+            channel_title: Channel title
+            channel_id: Channel ID
+            
+        Returns:
+            Tuple of (message_tracker, file_tracker)
+        """
+        from channel_utils import get_channel_tracker_path, get_channel_downloads_dir
+        
+        channel_id_str = str(channel_id)
+        
+        # Check if trackers already exist for this channel
+        if channel_id_str in self.message_trackers and channel_id_str in self.file_trackers:
+            return self.message_trackers[channel_id_str], self.file_trackers[channel_id_str]
+        
+        # Create tracker paths
+        message_tracker_path = get_channel_tracker_path(
+            self.base_download_dir, channel_title, channel_id, 'message'
+        )
+        file_tracker_path = get_channel_tracker_path(
+            self.base_download_dir, channel_title, channel_id, 'file'
+        )
+        
+        # Create trackers
+        message_tracker = create_message_tracker(str(message_tracker_path), channel_id_str)
+        file_tracker = create_file_tracker(str(file_tracker_path), channel_id_str)
+        
+        # Store in cache
+        self.message_trackers[channel_id_str] = message_tracker
+        self.file_trackers[channel_id_str] = file_tracker
+        
+        self.logger.info(f"Created trackers for channel {channel_title} ({channel_id_str})")
+        
+        return message_tracker, file_tracker
+    
+    def get_channel_download_dir(self, channel_title: str, channel_id: Union[str, int]) -> Path:
+        """Get download directory for a specific channel"""
+        from channel_utils import get_channel_downloads_dir
+        return get_channel_downloads_dir(self.base_download_dir, channel_title, channel_id)

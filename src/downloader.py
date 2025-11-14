@@ -8,10 +8,10 @@ from telethon.tl.types import DocumentAttributeAudio, DocumentAttributeFilename
 
 
 class TelegramDownloader:
-    def __init__(self, client, config_loader, file_tracker):
+    def __init__(self, client, config_loader, file_tracker=None):
         self.client = client
         self.config = config_loader
-        self.file_tracker = file_tracker
+        self.file_tracker = file_tracker  # Default file tracker (can be None)
         self.logger = logging.getLogger(__name__)
         
         # Get configuration settings
@@ -25,21 +25,30 @@ class TelegramDownloader:
     async def download_media_file(self, media_info: Dict[str, Any], file_info: str = "") -> Dict[str, Any]:
         """Download media file from Telegram and return result with status and details"""
         
+        # Get file tracker from media_info or use default
+        file_tracker = media_info.get('file_tracker', self.file_tracker)
+        
         # Check if file should be skipped based on tracker
-        should_skip, skip_reason = self.file_tracker.should_skip_file(media_info)
-        if should_skip:
-            self.logger.info(f"→ Skipping file: {media_info['filename']} {file_info} - {skip_reason}")
-            return {
-                'status': 'skipped',
-                'reason': skip_reason,
-                'file_path': None,
-                'logged': True  # Indicates the message has already been logged by the tracker
-            }
+        if file_tracker:
+            should_skip, skip_reason = file_tracker.should_skip_file(media_info)
+            if should_skip:
+                self.logger.info(f"→ Skipping file: {media_info['filename']} {file_info} - {skip_reason}")
+                return {
+                    'status': 'skipped',
+                    'reason': skip_reason,
+                    'file_path': None,
+                    'logged': True  # Indicates the message has already been logged by the tracker
+                }
         
         try:
             # Generate filename
             filename = self._generate_filename(media_info)
-            file_path = self.download_dir / filename
+            
+            # Use channel-specific download directory if provided in media_info
+            download_dir = Path(media_info.get('download_dir', self.download_dir))
+            download_dir.mkdir(parents=True, exist_ok=True)
+            
+            file_path = download_dir / filename
             
             # Check if a file with the same name already exists (regardless of the message)
             if file_path.exists():
@@ -92,9 +101,11 @@ class TelegramDownloader:
                         file_path = normalized_path
 
                 # Track downloaded file in file_tracker
-                file_hash = await self.file_tracker.track_downloaded_file(media_info, str(file_path))
-                
-                self.logger.info(f"✓ Downloaded successfully: {file_path.name} {file_info} (hash: {file_hash[:8]}...)")
+                if file_tracker:
+                    file_hash = await file_tracker.track_downloaded_file(media_info, str(file_path))
+                    self.logger.info(f"✓ Downloaded successfully: {file_path.name} {file_info} (hash: {file_hash[:8]}...)")
+                else:
+                    self.logger.info(f"✓ Downloaded successfully: {file_path.name} {file_info}")
                 
                 return {
                     'status': 'success',
@@ -115,8 +126,8 @@ class TelegramDownloader:
         except Exception as e:
             self.logger.error(f"✗ Download error for {media_info['filename']} {file_info}: {e}")
             # Add to blacklist on persistent errors
-            if "flood" in str(e).lower() or "timeout" in str(e).lower():
-                self.file_tracker.add_blacklisted_file(
+            if file_tracker and ("flood" in str(e).lower() or "timeout" in str(e).lower()):
+                file_tracker.add_blacklisted_file(
                     media_info['message_id'], 
                     f"Download error: {str(e)[:100]}"
                 )
@@ -255,16 +266,21 @@ class TelegramDownloader:
     
     def get_download_statistics(self) -> Dict[str, Any]:
         """Get download statistics"""
-        file_stats = self.file_tracker.get_statistics()
-        
-        return {
+        stats = {
             'download_directory': str(self.download_dir),
-            'naming_template': self.naming_template,
-            'total_downloaded_files': file_stats['total_downloaded_files'],
-            'total_blacklisted_files': file_stats['total_blacklisted_files']
+            'naming_template': self.naming_template
         }
+        
+        if self.file_tracker:
+            file_stats = self.file_tracker.get_statistics()
+            stats.update({
+                'total_downloaded_files': file_stats['total_downloaded_files'],
+                'total_blacklisted_files': file_stats['total_blacklisted_files']
+            })
+        
+        return stats
 
 
-def create_downloader(client, config_loader, file_tracker) -> TelegramDownloader:
+def create_downloader(client, config_loader, file_tracker=None) -> TelegramDownloader:
     """Create downloader instance"""
     return TelegramDownloader(client, config_loader, file_tracker)
