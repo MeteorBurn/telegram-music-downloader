@@ -30,29 +30,32 @@ data/downloads/
 
 | config.yaml | Telegram entity.id | Название папки (ДО) | Название папки (ПОСЛЕ) |
 |-------------|-------------------|---------------------|------------------------|
-| `-1001234567890` | `-1001234567890` | `ChannelTitle_1001234567890` | `ChannelTitle_1001234567890` |
-| `@musicchannel` | `-1009876543210` | `ChannelTitle_1009876543210` | `ChannelTitle_musicchannel` |
+| `-1001234567890` | `-1001234567890` | `ChannelTitle_1001234567890` | `ChannelTitle_-1001234567890` |
+| `@musicchannel` | `-1009876543210` | `ChannelTitle_1009876543210` | `ChannelTitle_@musicchannel` |
+| `-1002006273817` | `-1002006273817` | `Romanian_Avantgarde_private_1002006273817` | `Romanian_Avantgarde_private_-1002006273817` |
 
 **Преимущества:**
 - ✓ Консистентность с конфигурацией
-- ✓ Предсказуемость названий папок
+- ✓ Предсказуемость названий папок (соответствует ID из config.yaml)
 - ✓ Использование human-readable username'ов для публичных каналов
+- ✓ Точное соответствие ID из конфигурации
 
 ---
 
 #### 2. Форматирование channel_id в tracker файлах
 
 **Файлы:**
-- `src/main.py` (импорт и использование `format_channel_id()`)
+- `src/main.py` (использование channel_id напрямую)
+- `src/channel_utils.py` (сохранение оригинального ID)
 
 **Суть изменения:**
-- `channel_id` в `message_tracker.json` и `file_tracker.json` теперь форматируется
-- Удаляются символы `-` (минус) и `@` для единообразия с названиями папок
+- `channel_id` в `message_tracker.json` и `file_tracker.json` теперь СОХРАНЯЕТ оригинальный формат
+- Символы `-` (минус) и `@` СОХРАНЯЮТСЯ как в config.yaml
 
 **До изменения:**
 ```json
 {
-  "channel_id": "-1001234567890",
+  "channel_id": "1001234567890",
   "processed_messages": [...]
 }
 ```
@@ -60,7 +63,7 @@ data/downloads/
 **После изменения:**
 ```json
 {
-  "channel_id": "1001234567890",
+  "channel_id": "-1001234567890",
   "processed_messages": [...]
 }
 ```
@@ -69,14 +72,14 @@ data/downloads/
 
 | Значение в config.yaml | channel_id в tracker (ДО) | channel_id в tracker (ПОСЛЕ) |
 |------------------------|---------------------------|------------------------------|
-| `-1001234567890` | `-1001234567890` | `1001234567890` |
-| `@musicchannel` | `@musicchannel` | `musicchannel` |
-| `-123456789` | `-123456789` | `123456789` |
+| `-1001234567890` | `1001234567890` | `-1001234567890` |
+| `@musicchannel` | `musicchannel` | `@musicchannel` |
+| `-1002006273817` | `1002006273817` | `-1002006273817` |
 
 **Преимущества:**
-- ✓ Консистентность между именами папок и tracker файлами
-- ✓ Избежание проблем с минусом в разных контекстах
-- ✓ Улучшенная читаемость
+- ✓ Полная консистентность с config.yaml
+- ✓ Точное соответствие указанному идентификатору
+- ✓ Упрощение отладки (ID совпадает с конфигурацией)
 
 ---
 
@@ -184,14 +187,14 @@ channels:
 ```
 
 **До изменений:**
-- Папка: `data/downloads/ChannelTitle_1001234567890/`
+- Папка: `data/downloads/ChannelTitle_1001234567890/` (entity.id без минуса)
 - tracker: `"channel_id": "1001234567890"`
 
 **После изменений:**
-- Папка: `data/downloads/ChannelTitle_1001234567890/`
-- tracker: `"channel_id": "1001234567890"`
+- Папка: `data/downloads/ChannelTitle_-1001234567890/` (с минусом)
+- tracker: `"channel_id": "-1001234567890"`
 
-**Результат:** ✓ Без изменений (если ID уже был без минуса в entity.id)
+**Результат:** ⚠️ Будет создана НОВАЯ папка с минусом
 
 #### Сценарий 2: Канал указан по username
 
@@ -273,13 +276,14 @@ channels:
 ### Ожидаемые результаты
 
 **1. Название папок:**
-- Для `-1001234567890`: `ChannelTitle_1001234567890/`
-- Для `@musicchannel`: `ChannelTitle_musicchannel/`
+- Для `-1001234567890`: `ChannelTitle_-1001234567890/`
+- Для `@musicchannel`: `ChannelTitle_@musicchannel/`
+- Для `-1002006273817`: `Romanian_Avantgarde_private_-1002006273817/`
 
 **2. В tracker файлах:**
 ```json
 {
-  "channel_id": "1001234567890",  // Без минуса
+  "channel_id": "-1001234567890",  // С минусом, как в config.yaml
   "processed_messages": [...]
 }
 ```
@@ -325,10 +329,14 @@ channel_id = str(entity.id)
 ## Коммиты
 
 ```
-5b9754a - Change download priority from file size to message ID
-f84f4be - Format channel_id in trackers (remove '-' and '@' symbols)
 4ddb8e5 - Use channel_id from config.yaml for folder naming
+f84f4be - Format channel_id in trackers (remove '-' and '@' symbols)
+5b9754a - Change download priority from file size to message ID
+1c259ca - Use exact channel_id from config.yaml in folder names and trackers
+8ee6b7f - Add comprehensive documentation for queue behavior and changes
 ```
+
+⚠️ **Важно:** Коммиты 4ddb8e5 и f84f4be были ОТМЕНЕНЫ коммитом 1c259ca
 
 ### Детали коммитов
 
@@ -337,15 +345,26 @@ f84f4be - Format channel_id in trackers (remove '-' and '@' symbols)
 - Изменён `src/message_parser.py`: добавлен параметр `config_channel_id`
 - Теперь используется ID из конфигурации для именования папок
 
-**Коммит 2: Format channel_id in trackers**
+**Коммит 2: Format channel_id in trackers** (ОТМЕНЁН)
 - Добавлен импорт `format_channel_id` в `src/main.py`
-- Применяется форматирование для удаления `-` и `@`
-- Консистентность между папками и tracker файлами
+- Применялось форматирование для удаления `-` и `@`
+- ⚠️ Этот подход был отменён в коммите 1c259ca
 
 **Коммит 3: Change download priority from file size to message ID**
 - Изменён `src/download_queue.py`: приоритет по `message_id`
 - Файлы скачиваются в хронологическом порядке
 - Более предсказуемое поведение
+
+**Коммит 4: Use exact channel_id from config.yaml** (ИТОГОВЫЙ)
+- Убран импорт `format_channel_id` из `src/main.py`
+- Изменён `src/channel_utils.py`: сохранение оригинального ID
+- ID используется ТОЧНО как указан в config.yaml (с `-` и `@`)
+- Полная консистентность между config.yaml, папками и tracker'ами
+
+**Коммит 5: Add comprehensive documentation**
+- Добавлена документация по работе очереди скачивания
+- Добавлено резюме всех изменений
+- Добавлена документация о форматах Telegram ID
 
 ---
 
@@ -376,9 +395,9 @@ A: Можно переименовать вручную или оставить 
 
 A: Нет, скачанные файлы остаются нетронутыми. Изменения влияют только на новые загрузки.
 
-**Q: Почему channel_id без минуса?**
+**Q: Почему channel_id С минусом?**
 
-A: Минус может вызывать проблемы в командной строке и некоторых ОС. Форматированный ID более универсален. См. TELEGRAM_ID_FORMAT.md для подробностей.
+A: Channel ID используется ТОЧНО как указан в config.yaml для полной консистентности. Минус в середине пути (в части ID) не вызывает проблем в современных ОС. См. TELEGRAM_ID_FORMAT.md для подробностей.
 
 ---
 
