@@ -1,6 +1,6 @@
 # Telegram Music Downloader
 
-> **Note:** This project was developed with AI assistance.
+> **🤖 AI-Powered Development:** This project was fully developed with the assistance of [Claude AI](https://www.anthropic.com/claude) by Anthropic. The entire codebase, architecture, and documentation were created through AI-assisted development.
 
 A Python-based application designed to download audio files (primarily music) from specified Telegram channels. It offers features like **concurrent downloads**, advanced filtering, download tracking, and robust logging.
 
