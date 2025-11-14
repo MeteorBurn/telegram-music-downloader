@@ -21,7 +21,6 @@ from tracker import TrackerManager
 from downloader import create_downloader
 from download_coordinator import create_download_coordinator
 from download_monitor import create_download_monitor, ProgressDisplay
-from channel_utils import format_channel_id
 
 
 class TelegramMusicDownloader:
@@ -159,8 +158,8 @@ class TelegramMusicDownloader:
         self.logger.info(f"Processing channel: {channel_name} ({entity.title})")
         
         # Get channel ID from config (use channel_name which is the original identifier from config.yaml)
-        # Format it to remove "-" and "@" symbols for consistency
-        channel_id = format_channel_id(channel_name)
+        # Use it exactly as specified in config, without any formatting
+        channel_id = str(channel_name)
         channel_title = entity.title
         
         # Get or create trackers for this channel
@@ -267,8 +266,8 @@ class TelegramMusicDownloader:
         self.logger.info(f"Processing channel: {channel_name} ({entity.title})")
         
         # Get channel ID from config (use channel_name which is the original identifier from config.yaml)
-        # Format it to remove "-" and "@" symbols for consistency
-        channel_id = format_channel_id(channel_name)
+        # Use it exactly as specified in config, without any formatting
+        channel_id = str(channel_name)
         channel_title = entity.title
         
         # Get or create trackers for this channel

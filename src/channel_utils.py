@@ -92,28 +92,29 @@ def format_channel_id(channel_id: Union[str, int]) -> str:
 
 def create_channel_folder_name(channel_title: str, channel_id: Union[str, int], max_title_length: int = 50) -> str:
     """
-    Create folder name for channel in format: {sanitized_title}_{formatted_id}
+    Create folder name for channel in format: {sanitized_title}_{channel_id}
     
     Args:
         channel_title: Original channel title
-        channel_id: Channel ID (numeric or username)
+        channel_id: Channel ID (numeric or username) - used as-is from config.yaml
         max_title_length: Maximum length for title part
     
     Returns:
-        Folder name in format: ChannelName_1001234567890
+        Folder name in format: ChannelName_{channel_id}
     
     Examples:
         >>> create_channel_folder_name("Music & Rock 🎸", -1001234567890)
-        'Music_Rock_1001234567890'
+        'Music_Rock_-1001234567890'
         >>> create_channel_folder_name("Музыка", -1009876543210)
-        'Muzyka_1009876543210'
+        'Muzyka_-1009876543210'
         >>> create_channel_folder_name("Jazz", "@jazzmusic")
-        'Jazz_jazzmusic'
+        'Jazz_@jazzmusic'
     """
     sanitized_title = sanitize_channel_name(channel_title, max_title_length)
-    formatted_id = format_channel_id(channel_id)
+    # Use channel_id as-is, without any formatting
+    channel_id_str = str(channel_id)
     
-    return f"{sanitized_title}_{formatted_id}"
+    return f"{sanitized_title}_{channel_id_str}"
 
 
 def get_channel_directory(base_dir: Union[str, Path], channel_title: str, channel_id: Union[str, int]) -> Path:
