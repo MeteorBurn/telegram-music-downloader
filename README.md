@@ -13,7 +13,8 @@ A Python-based application designed to download audio files (primarily music) fr
     *   Filter by specific file formats (e.g., `.mp3`, `.flac`, `.wav`).
     *   Filter by file size (min/max MB).
     *   Filter by message date range.
-*   **📊 Download & Message Tracking**: Tracks both downloaded files and processed messages using separate, robust tracker modules. Prevents duplicates and enables reliable recovery.
+*   **📊 Download & Message Tracking**: Tracks both downloaded files and processed messages using separate, robust tracker modules (per-channel). Prevents duplicates and enables reliable recovery.
+*   **📁 Per-Channel Organization**: Each channel/group has its own folder with separate trackers for independent progress tracking.
 *   **📝 Robust Logging**: Comprehensive and resilient logging to both console and file, including log rotation and logger health checks.
 *   **📁 Customizable File Naming**: Define templates for naming downloaded files.
 *   **✨ Track Name Normalization & Cleanup**: Automatically cleans up and standardizes track names after download (optional, see below).
@@ -45,6 +46,7 @@ The application supports downloading multiple files simultaneously to significan
 - **How it works:**
     - Uses a producer-consumer pattern with a priority queue
     - Downloads 1-5 files concurrently (configurable)
+    - Files download in chronological order (by message ID, oldest first)
     - Intelligent rate limiting prevents API blocking
     - Thread-safe file tracking prevents duplicates
     - Real-time progress monitoring with worker status
@@ -122,13 +124,41 @@ To specify channels in `config.yaml`, you need their numeric IDs. Here's how to 
 - Channel IDs are usually negative numbers (e.g., `-1001234567890`)
 - Public channels can be specified by username (e.g., `@channelname`) or numeric ID
 - Private channels/groups must use numeric ID
+- The channel ID from config.yaml is used exactly as specified for folder naming (preserving `-` and `@` symbols)
 - In `config.yaml`, list channel IDs under the `channels:` section:
   ```yaml
   channels:
-    - -1001234567890  # Private channel ID
-    - @publicchannel  # Public channel username
+    - -1001234567890  # Private channel ID → folder: ChannelName_-1001234567890/
+    - @publicchannel  # Public channel username → folder: ChannelName_@publicchannel/
     - -1009876543210  # Another channel ID
   ```
+
+### Per-Channel Folder Organization
+
+The application organizes downloads into separate folders for each channel/group, with independent tracking:
+
+**Folder naming:**
+- Format: `{SanitizedChannelTitle}_{channel_id_from_config}`
+- Channel ID is used exactly as specified in `config.yaml` (preserving `-` and `@`)
+- Examples:
+  - Config: `-1002006273817` → Folder: `MusicChannel_-1002006273817/`
+  - Config: `@publicmusic` → Folder: `PublicMusic_@publicmusic/`
+
+**Per-channel trackers:**
+Each folder contains its own trackers:
+- `message_tracker.json` - Tracks processed message IDs for this channel
+- `file_tracker.json` - Tracks downloaded files with hash-based duplicate detection
+
+**Benefits:**
+- ✅ Independent progress tracking per channel
+- ✅ Resume downloads for specific channels without affecting others
+- ✅ Easy to manage and organize downloaded content
+- ✅ Clear identification of content source
+
+**Download order:**
+- Files download in **chronological order** (oldest messages first)
+- Priority based on message ID, not file size
+- Predictable and consistent download sequence
 
 ## Usage
 
@@ -195,7 +225,6 @@ telegram-music-downloader/
 ├── .gitignore
 ├── README.md
 ├── requirements.txt
-├── CONCURRENT_DOWNLOADS.md  # Detailed concurrent downloads documentation
 ├── src/
 │   ├── main.py               # Async main entry point with concurrent support
 │   ├── config.yaml           # Main configuration file (template/defaults)
@@ -212,9 +241,18 @@ telegram-music-downloader/
 │   ├── message_parser.py     # Async parsing of channel messages for media
 │   ├── normalizer.py         # Track name normalization and cleanup
 │   ├── session_manager.py    # Manages and backs up Telegram sessions
-│   └── tracker.py            # Thread-safe tracking of files and messages
+│   ├── channel_utils.py      # Channel folder utilities
+│   └── tracker.py            # Thread-safe tracking of files and messages (per-channel)
 └── data/                     # Default directory for downloads, logs, sessions
     ├── downloads/
+    │   ├── ChannelName_-1001234567890/  # Per-channel folder
+    │   │   ├── message_tracker.json     # Channel-specific message tracker
+    │   │   ├── file_tracker.json        # Channel-specific file tracker
+    │   │   └── [downloaded files...]
+    │   └── AnotherChannel_@username/
+    │       ├── message_tracker.json
+    │       ├── file_tracker.json
+    │       └── [downloaded files...]
     ├── logs/
     └── sessions/
 ```
