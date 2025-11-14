@@ -28,7 +28,7 @@ class MessageParser:
         
         return entities
     
-    async def parse_messages(self, entity, last_processed_id: Optional[int] = None, limit: Optional[int] = None) -> AsyncIterator[Dict]:
+    async def parse_messages(self, entity, last_processed_id: Optional[int] = None, limit: Optional[int] = None, config_channel_id: Optional[str] = None) -> AsyncIterator[Dict]:
         """
         Parse messages from channel and extract media info (from oldest to newest)
         
@@ -36,6 +36,7 @@ class MessageParser:
             entity: Channel entity
             last_processed_id: Last processed message ID (if any)
             limit: Maximum number of messages to process
+            config_channel_id: Channel ID from config.yaml (optional, overrides entity.id)
             
         Returns:
             AsyncIterator with message info dictionaries
@@ -76,9 +77,11 @@ class MessageParser:
                     await asyncio.sleep(timeout)
                 
                 # Basic message info, always present
+                # Use config_channel_id if provided, otherwise fall back to entity.id
+                channel_id_to_use = config_channel_id if config_channel_id is not None else str(entity.id)
                 message_info = {
                     'message_id': message.id,
-                    'channel_id': str(entity.id),
+                    'channel_id': channel_id_to_use,
                     'publish_date': message.date,
                     'has_media': bool(message.media),
                 }
