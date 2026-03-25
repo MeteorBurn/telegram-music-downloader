@@ -57,16 +57,16 @@ class TelegramMusicClient:
             await self.client.connect()
 
             if not await self.client.is_user_authorized():
-                self.logger.info("User not authorized, starting authentication")
+                self.logger.info("[AUTH] User not authorized, starting authentication")
                 await self._authenticate()
             else:
-                self.logger.info("User already authorized")
+                self.logger.info("[AUTH] User already authorized")
 
-            self.logger.info("Successfully connected to Telegram")
+            self.logger.info("[AUTH] Successfully connected to Telegram")
             return True
 
         except Exception as e:
-            self.logger.error(f"Failed to connect: {e}")
+            self.logger.error(f"[FAIL] Failed to connect to Telegram: {e}")
             return False
 
     async def _authenticate(self) -> None:
@@ -87,17 +87,17 @@ class TelegramMusicClient:
                     raise Exception("2FA is required but not enabled in config")
 
         except PhoneCodeInvalidError:
-            self.logger.error("Invalid verification code")
+            self.logger.error("[AUTH] Invalid verification code")
             raise
         except PasswordHashInvalidError:
-            self.logger.error("Invalid 2FA password")
+            self.logger.error("[AUTH] Invalid 2FA password")
             raise
 
     async def disconnect(self) -> None:
         """Disconnect from Telegram"""
         if self.client and self.client.is_connected():
             await self.client.disconnect()
-            self.logger.info("Disconnected from Telegram")
+            self.logger.info("[AUTH] Disconnected from Telegram")
 
     def get_client(self) -> TelegramClient:
         """Get the Telegram client instance"""

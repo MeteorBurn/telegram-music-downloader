@@ -33,22 +33,22 @@ class MediaFilter:
 
             # Check file type (audio/document)
             if not self._check_file_type(parsed_message):
-                self.logger.info(f"→ Filtered out (type): {parsed_message.filename}")
+                self.logger.info(f"[FILTER] type: {parsed_message.filename}")
                 return False
 
             # Check file format extension
             if not self._check_file_format(parsed_message):
-                self.logger.info(f"→ Filtered out (format): {parsed_message.filename}")
+                self.logger.info(f"[FILTER] format: {parsed_message.filename}")
                 return False
 
             # Check file size
             if not self._check_file_size(parsed_message):
-                self.logger.info(f"→ Filtered out (size): {parsed_message.filename}")
+                self.logger.info(f"[FILTER] size: {parsed_message.filename}")
                 return False
 
             # Check message date
             if not self._check_message_date(parsed_message):
-                self.logger.info(f"→ Filtered out (date): {parsed_message.filename}")
+                self.logger.info(f"[FILTER] date: {parsed_message.filename}")
                 return False
 
             self.logger.debug(f"All filters passed: {parsed_message.filename}")
@@ -59,7 +59,7 @@ class MediaFilter:
                 filename = media_info.get("filename", "unknown")
             else:
                 filename = getattr(media_info, "filename", "unknown")
-            self.logger.error(f"Filter error for {filename}: {e}")
+            self.logger.error(f"[FAIL] Filter error for {filename}: {e}")
             return False
 
     def _check_file_type(self, media_info: ParsedMessage) -> bool:
@@ -119,7 +119,7 @@ class MediaFilter:
                     message_date.replace("Z", "+00:00")
                 )
             except ValueError:
-                self.logger.warning(f"Invalid date format: {message_date}")
+                self.logger.warning(f"[WARN] Invalid date format: {message_date}")
                 return True
 
         # Check from date

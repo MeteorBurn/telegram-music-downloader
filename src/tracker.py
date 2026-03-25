@@ -129,13 +129,13 @@ class FileTracker:
         if message_id not in self.store.state.blacklisted_message_ids:
             self.store.state.blacklisted_message_ids.append(message_id)
             self.store.save_state()
-        self.logger.info(f"File from message {message_id} blacklisted: {reason}")
+        self.logger.info(f"[BLACKLIST] Message {message_id} blacklisted: {reason}")
 
     def remove_from_blacklist(self, message_id: int) -> None:
         if message_id in self.store.state.blacklisted_message_ids:
             self.store.state.blacklisted_message_ids.remove(message_id)
             self.store.save_state()
-            self.logger.info(f"Message {message_id} removed from blacklist")
+        self.logger.info(f"[BLACKLIST] Message {message_id} removed from blacklist")
 
     async def track_downloaded_file(self, payload: Any, file_path: str) -> str:
         async with self._lock:
@@ -168,7 +168,9 @@ class FileTracker:
                 "publish_date": publish_date_str,
             }
             self.store.save_state()
-            self.logger.info(f"File tracked: {request.filename} -> {file_hash}")
+            self.logger.debug(
+                f"[TRACK] Recorded: {request.filename} (hash: {file_hash[:8]}...)"
+            )
             return file_hash
 
     def _calculate_file_hash(self, file_path: str) -> str:
@@ -200,7 +202,7 @@ class FileTracker:
                 return True, f"File already downloaded: {existing_file['file_path']}"
 
             self.logger.warning(
-                f"File tracked but missing on disk: {existing_file['file_path']}"
+                f"[WARN] File tracked but missing on disk: {existing_file['file_path']}"
             )
 
         return False, ""
@@ -225,7 +227,7 @@ class FileTracker:
             if not file_path.exists():
                 removed_hashes.append(file_hash)
                 self.logger.info(
-                    f"Removing missing file from tracker: {file_info['filename']}"
+                    f"[CLEANUP] Removing missing file from tracker: {file_info['filename']}"
                 )
 
         for file_hash in removed_hashes:
@@ -278,7 +280,7 @@ class TrackerManager:
         self.file_trackers[channel_id_str] = file_tracker
 
         self.logger.info(
-            f"Created trackers for channel {channel_title} ({channel_id_str})"
+            f"[INIT] Trackers created for channel {channel_title} ({channel_id_str})"
         )
         return message_tracker, file_tracker
 
@@ -360,5 +362,5 @@ class TrackerManager:
                 payload = json.load(handle)
             return payload.get("channel_id")
         except Exception as exc:
-            self.logger.warning(f"Failed to read state file {state_path}: {exc}")
+            self.logger.warning(f"[WARN] Failed to read state file {state_path}: {exc}")
             return None

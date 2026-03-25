@@ -32,18 +32,18 @@ class ChannelProcessor:
         context = self._get_channel_context(channel_name, entity)
         result = self._initialize_channel_state(context)
 
-        self.logger.info(f"Processing channel: {channel_name} ({entity.title})")
+        self.logger.info(f"[CHANNEL] Processing: {channel_name} ({entity.title})")
 
         try:
             if context.last_processed_id:
                 self.logger.info(
-                    f"Continuing from last processed message ID: {context.last_processed_id}"
+                    f"[CHANNEL] Resume from message ID: {context.last_processed_id}"
                 )
 
             stats = await self.parser.get_channel_stats(entity)
             if stats:
                 self.logger.info(
-                    f"Channel stats: {stats['media_messages']} media files in last 100 messages"
+                    f"[CHANNEL] Stats: {stats['media_messages']} media files in last 100 messages"
                 )
 
             files_queued_in_channel = 0
@@ -87,27 +87,28 @@ class ChannelProcessor:
                     result.files_queued += 1
                     files_queued_in_channel += 1
                     self.logger.info(
-                        f"Queued for download: {queued_message.filename} {queued_message.file_info_str}"
+                        f"[QUEUE] {queued_message.filename} {queued_message.file_info_str}"
                     )
                 else:
                     context.message_tracker.mark_message_outcome(message_id, "failed")
-                    self.logger.warning(f"Failed to queue: {queued_message.filename}")
+                    self.logger.warning(
+                        f"[FAIL] Failed to queue: {queued_message.filename}"
+                    )
 
                 if max_files > 0 and files_queued_in_channel >= max_files:
                     self.logger.info(
-                        f"Reached file limit ({max_files}) for channel {channel_name} in this run."
+                        f"[CHANNEL] File limit reached ({max_files}) for {channel_name}"
                     )
                     break
 
             self.logger.info(
-                f"Channel {channel_name} processed: "
-                f"{result.files_queued} files queued, "
-                f"{result.messages_processed} messages processed"
+                f"[CHANNEL] Done: {channel_name} - "
+                f"{result.files_queued} queued, {result.messages_processed} messages scanned"
             )
             return result.to_dict()
 
         except Exception as e:
-            self.logger.error(f"Error processing channel {channel_name}: {e}")
+            self.logger.error(f"[FAIL] Error processing channel {channel_name}: {e}")
             raise
 
     def _get_channel_context(self, channel_name: str, entity) -> ChannelContext:

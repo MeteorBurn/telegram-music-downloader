@@ -39,7 +39,7 @@ class TelegramDownloader:
             should_skip, skip_reason = file_tracker.should_skip_file(request)
             if should_skip:
                 self.logger.info(
-                    f"→ Skipping file: {request.filename} {file_info} - {skip_reason}"
+                    f"[SKIP] {request.filename} {file_info} - {skip_reason}"
                 )
                 return DownloadOutcome(
                     status="skipped",
@@ -63,7 +63,7 @@ class TelegramDownloader:
                 # Physical file existence check
                 skip_reason = f"File with same name already exists: {file_path}"
                 self.logger.info(
-                    f"→ Skipping file: {request.filename} {file_info} - {skip_reason}"
+                    f"[SKIP] {request.filename} {file_info} - {skip_reason}"
                 )
 
                 # If file tracker exists, check if this file is tracked
@@ -74,7 +74,7 @@ class TelegramDownloader:
                     if not existing_file:
                         # File exists on disk but not tracked - add to tracker
                         self.logger.info(
-                            f"→ Adding existing file to tracker: {file_path.name}"
+                            f"[TRACK] Adding existing file to tracker: {file_path.name}"
                         )
 
                         # Get file modification time as download date
@@ -92,7 +92,7 @@ class TelegramDownloader:
                             existing_request, str(file_path)
                         )
                         self.logger.info(
-                            f"✓ File added to tracker: {file_path.name} (hash: {file_hash[:8]}...)"
+                            f"[TRACK] Registered existing file: {file_path.name} (hash: {file_hash[:8]}...)"
                         )
 
                 # Return info that file was skipped due to existing name
@@ -109,7 +109,9 @@ class TelegramDownloader:
             # Create message object for download
             message = await self._get_message_by_id(request)
             if not message:
-                self.logger.error(f"✗ Could not retrieve message {request.message_id}")
+                self.logger.error(
+                    f"[FAIL] Could not retrieve message {request.message_id}"
+                )
                 return DownloadOutcome(
                     status="failed",
                     reason=f"Could not retrieve message {request.message_id}",
@@ -137,7 +139,7 @@ class TelegramDownloader:
                         normalized_path = file_path.with_name(normalized_file_name)
                         file_path.rename(normalized_path)
                         self.logger.info(
-                            f"Track name normalized: '{original_name}' -> '{normalized_name}'"
+                            f"[NORM] '{original_name}' -> '{normalized_name}'"
                         )
                         file_path = normalized_path
 
@@ -147,12 +149,10 @@ class TelegramDownloader:
                         request, str(file_path)
                     )
                     self.logger.info(
-                        f"✓ Downloaded successfully: {file_path.name} {file_info} (hash: {file_hash[:8]}...)"
+                        f"[OK] Downloaded: {file_path.name} {file_info} (hash: {file_hash[:8]}...)"
                     )
                 else:
-                    self.logger.info(
-                        f"✓ Downloaded successfully: {file_path.name} {file_info}"
-                    )
+                    self.logger.info(f"[OK] Downloaded: {file_path.name} {file_info}")
 
                 return DownloadOutcome(
                     status="success",
@@ -162,7 +162,9 @@ class TelegramDownloader:
                     logged=True,
                 ).to_dict()
             else:
-                self.logger.error(f"✗ Download failed: {filename} {file_info}")
+                self.logger.error(
+                    f"[FAIL] Download returned None: {filename} {file_info}"
+                )
                 return DownloadOutcome(
                     status="failed",
                     reason="Download returned None",
@@ -172,7 +174,7 @@ class TelegramDownloader:
 
         except Exception as e:
             self.logger.error(
-                f"✗ Download error for {request.filename} {file_info}: {e}"
+                f"[FAIL] Download error: {request.filename} {file_info} - {e}"
             )
             # Add to blacklist on persistent errors
             if file_tracker and (
@@ -194,7 +196,7 @@ class TelegramDownloader:
             return self.telegram_locator.create_message_for_request(media_info)
 
         except Exception as e:
-            self.logger.error(f"Error creating message object: {e}")
+            self.logger.error(f"[FAIL] Error creating message object: {e}")
             return None
 
     def _generate_filename(self, media_info: Any) -> str:

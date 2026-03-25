@@ -28,8 +28,10 @@ class JsonStateStore(Generic[T]):
             merged_payload.update(payload)
             return model_cls(**merged_payload)
         except Exception as exc:
-            self.logger.error(f"Failed to load state from {self.file_path}: {exc}")
-            self.logger.warning("Starting with empty state")
+            self.logger.error(
+                f"[FAIL] Failed to load state from {self.file_path}: {exc}"
+            )
+            self.logger.warning("[WARN] Starting with empty state")
             return model_cls(**defaults)
 
     def save(self, state: T) -> None:

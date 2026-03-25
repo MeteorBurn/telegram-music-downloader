@@ -54,24 +54,20 @@ class DownloadCoordinator:
         self.start_time = datetime.now()
 
         self.logger.info(
-            f"Starting download coordinator with {self.concurrent_downloads} workers"
+            f"[INIT] Download coordinator starting: {self.concurrent_downloads} workers, "
+            f"queue {self.max_queue_size}, rate {self.requests_per_second} req/sec"
         )
-        self.logger.info(
-            f"Rate limit: {self.requests_per_second} req/sec, burst: {self.burst_size}"
-        )
-        self.logger.info(f"Queue size: {self.max_queue_size}")
+        self.logger.debug(f"Rate limit burst: {self.burst_size}")
 
         # Запускаем пул воркеров
         await self.worker_pool.start()
-
-        self.logger.info("Download coordinator started successfully")
 
     async def stop(self):
         """Остановить координатор"""
         if not self.is_running:
             return
 
-        self.logger.info("Stopping download coordinator...")
+        self.logger.info("[STOP] Download coordinator stopping...")
         self._update_session_stats()
         self.is_running = False
 
@@ -81,12 +77,12 @@ class DownloadCoordinator:
         # Очищаем очередь
         self.queue.clear(outcome="failed")
 
-        self.logger.info("Download coordinator stopped")
+        self.logger.info("[STOP] Download coordinator stopped")
 
     async def add_download_task(self, media_info: Any, file_info_str: str = "") -> bool:
         """Добавить задачу на скачивание"""
         if not self.is_running:
-            self.logger.error("Coordinator is not running, cannot add task")
+            self.logger.error("[FAIL] Coordinator is not running, cannot add task")
             return False
 
         request = DownloadRequest.from_payload(media_info)
@@ -112,9 +108,9 @@ class DownloadCoordinator:
             self.logger.warning("Coordinator is not running")
             return
 
-        self.logger.info("Waiting for all downloads to complete...")
+        self.logger.info("[WAIT] Waiting for all downloads to complete...")
         await self.worker_pool.wait_completion()
-        self.logger.info("All downloads completed")
+        self.logger.info("[WAIT] All downloads completed")
 
         # Обновляем финальную статистику
         self._update_session_stats()

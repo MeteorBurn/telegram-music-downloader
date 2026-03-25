@@ -236,6 +236,54 @@ Follow existing repository style over external defaults.
   worker start/download/completion/stop events were all captured in one
   `console.log` without dropped messages.
 
+#### Log Message Markers
+All runtime log messages use a consistent `[TAG]` prefix at the start of the
+message text. Do not use Unicode symbols (`✓`, `✗`, `→`) — use ASCII markers only.
+
+| Marker | Meaning | Modules |
+|---|---|---|
+| `[OK]` | Successful download | `downloader.py` |
+| `[SKIP]` | File skipped | `downloader.py` |
+| `[FAIL]` | Error or failure of any kind | all modules |
+| `[DOWN]` | Download started | `download_worker.py` |
+| `[FILTER]` | File rejected by filter | `media_filter.py` |
+| `[QUEUE]` | File added to download queue | `channel_processor.py` |
+| `[NORM]` | Track name normalized | `downloader.py` |
+| `[TRACK]` | File registered in tracker (DEBUG only) | `tracker.py` |
+| `[BLACKLIST]` | Blacklist add/remove | `tracker.py` |
+| `[CHANNEL]` | Channel processing events | `channel_processor.py`, `message_parser.py` |
+| `[AUTH]` | Telegram auth/connect events | `client.py` |
+| `[INIT]` | Initialization events | `coordinator`, `worker pool`, `tracker` |
+| `[STOP]` | Shutdown events | `coordinator`, `worker pool` |
+| `[WAIT]` | Waiting for queue completion | `download_coordinator.py` |
+| `[SESSION]` | Session-level progress | `session_runner.py` |
+| `[CLEANUP]` | Tracker cleanup | `session_runner.py`, `tracker.py` |
+| `[STATS]` | Statistics display | `session_runner.py` |
+| `[RESULTS]` | Session results block | `main.py` |
+| `[SUMMARY]` | Download summary block | `download_monitor.py` |
+| `[WARN]` | Non-fatal warning context | `tracker.py`, `media_filter.py`, `state_store.py` |
+| `[worker_N]` | Per-worker prefix | `download_worker.py` |
+
+Worker events always include the worker identifier:
+```
+[worker_3] [DOWN] Downloading: track.wav [07:30] [70.0 MB]
+[worker_3] [OK] Completed: track.wav
+[worker_3] [FAIL] Failed: track.wav
+```
+
+#### Log Levels
+- `INFO` — all user-visible session events: auth, channel scan, queue, skip, download, summary, errors.
+- `DEBUG` — internal diagnostics: `[TRACK]` tracker records, rate limiter tokens, queue internals.
+- `WARNING` — recoverable issues: invalid date format, blacklist ops, missing-on-disk files, Telegram internal errors, shutdown timeouts.
+- `ERROR` — failures that affect correctness: download errors, failed queue ops, entity resolution failures, state load failures.
+
+Do not log `Rate limit: ... req/sec`, `Queue size: ...`, or `coordinator started successfully`
+at `INFO` level — these belong at `DEBUG`.
+
+#### Empty Lines in Logs
+`emit_session_lines()` skips empty strings in the log file (they go to console only).
+Use separator strings like `"-" * 40` or `"=" * 50` as content lines, not empty entries.
+
 ### Filesystem and Persistence
 - Tracker JSON files are part of the app's persistent state.
 - Preserve atomic write patterns when editing tracker behavior.

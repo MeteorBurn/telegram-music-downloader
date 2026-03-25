@@ -100,28 +100,23 @@ class DownloadMonitor:
     def display_summary(self):
         """Показать итоговую статистику"""
         summary = self.coordinator.get_session_summary()
+        duration_minutes = summary["session_duration_seconds"] // 60
+        duration_seconds = summary["session_duration_seconds"] % 60
+        sep = "=" * 50
         summary_lines = [
-            "=" * 60,
-            "DOWNLOAD SESSION SUMMARY",
-            "=" * 60,
+            sep,
+            "[SUMMARY] Download Session Complete",
+            sep,
             f"Files queued:     {summary['files_queued']}",
             f"Files completed:  {summary['files_completed']}",
             f"Files skipped:    {summary['files_skipped']}",
             f"Files failed:     {summary['files_failed']}",
             f"Total downloaded: {summary['total_mb_downloaded']:.1f} MB",
+            f"Duration:         {duration_minutes:02d}:{duration_seconds:02d}",
+            f"Avg speed:        {summary['average_speed_mbpm']:.1f} MB/min",
+            f"Success rate:     {summary['success_rate']:.1f}%",
+            sep,
         ]
-
-        duration_minutes = summary["session_duration_seconds"] // 60
-        duration_seconds = summary["session_duration_seconds"] % 60
-
-        summary_lines.extend(
-            [
-                f"Session duration: {duration_minutes:02d}:{duration_seconds:02d}",
-                f"Average speed:    {summary['average_speed_mbpm']:.1f} MB/min",
-                f"Success rate:     {summary['success_rate']:.1f}%",
-                "=" * 60,
-            ]
-        )
         emit_session_lines(summary_lines, logger=self.logger)
 
 
@@ -137,36 +132,36 @@ class ProgressDisplay:
             emit_session_message("Download coordinator is not running")
             return
 
+        sep = "-" * 40
         progress_lines = [
-            "Download Progress:",
-            (
-                f"   Progress: {progress_info['progress_percentage']:.1f}% "
-                f"({progress_info['terminal_tasks']}/{progress_info['total_tasks']})"
-            ),
-            f"   Completed: {progress_info['completed_tasks']}",
-            f"   Skipped: {progress_info['skipped_tasks']}",
-            f"   Failed: {progress_info['failed_tasks']}",
-            (
-                f"   Active workers: {progress_info['active_workers']}/{progress_info['total_workers']}"
-            ),
-            f"   Queue size: {progress_info['queue_size']}",
-            f"   Downloaded: {progress_info['total_mb_downloaded']:.1f} MB",
-            f"   Speed: {progress_info['download_speed_mbpm']:.1f} MB/min",
+            sep,
+            "[PROGRESS] Download Status",
+            sep,
+            f"  Progress:  {progress_info['progress_percentage']:.1f}% "
+            f"({progress_info['terminal_tasks']}/{progress_info['total_tasks']})",
+            f"  Done:      {progress_info['completed_tasks']}   "
+            f"Skipped: {progress_info['skipped_tasks']}   "
+            f"Failed: {progress_info['failed_tasks']}",
+            f"  Workers:   {progress_info['active_workers']}/{progress_info['total_workers']} active",
+            f"  Queue:     {progress_info['queue_size']} pending",
+            f"  Speed:     {progress_info['download_speed_mbpm']:.1f} MB/min  "
+            f"Downloaded: {progress_info['total_mb_downloaded']:.1f} MB",
         ]
 
         if progress_info["active_downloads"]:
-            progress_lines.append("   Active downloads:")
+            progress_lines.append("  Active:")
             for download in progress_info["active_downloads"]:
                 progress_lines.append(
-                    f"     * {download['worker_id']}: {download['filename']} ({download['file_size_mb']:.1f} MB)"
+                    f"    [{download['worker_id']}] {download['filename']} ({download['file_size_mb']:.1f} MB)"
                 )
 
         if progress_info["estimated_time_remaining"]:
             eta_minutes = progress_info["estimated_time_remaining"] // 60
             eta_seconds = progress_info["estimated_time_remaining"] % 60
-            progress_lines.append(f"   ETA: {eta_minutes:02d}:{eta_seconds:02d}")
+            progress_lines.append(f"  ETA:       {eta_minutes:02d}:{eta_seconds:02d}")
 
-        emit_session_lines([""] + progress_lines + [""], logger=get_logger())
+        progress_lines.append(sep)
+        emit_session_lines(progress_lines, logger=get_logger())
 
 
 def create_download_monitor(

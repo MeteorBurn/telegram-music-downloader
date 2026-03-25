@@ -95,6 +95,11 @@ def emit_session_lines(
     console: bool = True,
 ) -> None:
     for line in lines:
+        if not line.strip():
+            # Empty lines go to console only — do not create empty log records
+            if console and not has_console_handler(logger or get_logger()):
+                _write_safe_line("")
+            continue
         emit_session_message(line, level=level, logger=logger, console=console)
 
 

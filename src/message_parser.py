@@ -35,10 +35,10 @@ class MessageParser:
                 entity = await self.client.get_entity(channel)
                 entities.append((channel, entity))
                 self.logger.info(
-                    f"Channel entity retrieved: {channel} -> {entity.title}"
+                    f"[CHANNEL] Entity resolved: {channel} -> {entity.title}"
                 )
             except Exception as e:
-                self.logger.error(f"Failed to get entity for {channel}: {e}")
+                self.logger.error(f"[FAIL] Failed to get entity for {channel}: {e}")
 
         return entities
 
@@ -154,11 +154,11 @@ class MessageParser:
                 yield full_info
 
         except RpcMcgetFailError as e:
-            self.logger.warning(f"Telegram internal issues: {e}")
-            self.logger.info("Waiting 60 seconds before retry...")
+            self.logger.warning(f"[WARN] Telegram internal issues: {e}")
+            self.logger.info("[WARN] Waiting 60 seconds before retry...")
             await asyncio.sleep(60)
         except Exception as e:
-            self.logger.error(f"Error parsing messages from {entity.title}: {e}")
+            self.logger.error(f"[FAIL] Error parsing messages from {entity.title}: {e}")
 
     async def _extract_media_info(self, message) -> Optional[Dict]:
         """Extract relevant media information from message"""
@@ -262,7 +262,7 @@ class MessageParser:
             }
 
         except Exception as e:
-            self.logger.error(f"Error getting channel stats: {e}")
+            self.logger.error(f"[FAIL] Error getting channel stats: {e}")
             return {}
 
 

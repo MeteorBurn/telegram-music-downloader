@@ -110,10 +110,8 @@ class SessionRunnerCommandTests(unittest.IsolatedAsyncioTestCase):
         await runner.close()
 
         rendered = output.getvalue()
-        self.assertIn(
-            "Channel -100test: 1 files, 0 blacklisted, last safe message 1", rendered
-        )
-        self.assertIn("Total downloaded files (all channels): 1", rendered)
+        self.assertIn("-100test: 1 downloaded, 0 blacklisted", rendered)
+        self.assertIn("Total downloaded: 1 files across all channels", rendered)
 
     async def test_cleanup_tracker_reads_existing_state_from_disk(self):
         manager = TrackerManager(str(self.output_dir))

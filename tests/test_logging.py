@@ -386,12 +386,12 @@ class LoggingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         rendered = output.getvalue()
         log_content = self.read_console_log()
 
-        self.assertIn("=== Download Statistics ===", rendered)
+        self.assertIn("[STATS] Download Statistics", rendered)
         self.assertIn("No active in-process download session", rendered)
-        self.assertIn("=== Download Statistics ===", log_content)
+        self.assertIn("[STATS] Download Statistics", log_content)
         self.assertIn("No active in-process download session", log_content)
-        self.assertIn("=== Telegram Music Downloader Started ===", log_content)
-        self.assertIn("=== Telegram Music Downloader Finished ===", log_content)
+        self.assertIn("[START] Telegram Music Downloader Started", log_content)
+        self.assertIn("[STOP] Telegram Music Downloader Finished", log_content)
 
     async def test_live_progress_redraw_is_not_written_to_console_log(self):
         setup_logging(ConfigLoader(str(self.config_path)))
@@ -407,7 +407,7 @@ class LoggingIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("Progress:", rendered)
         self.assertIn("track.wav", rendered)
-        self.assertIn("DOWNLOAD SESSION SUMMARY", log_content)
+        self.assertIn("[SUMMARY] Download Session Complete", log_content)
         self.assertNotIn("Progress:", log_content)
         self.assertNotIn("track.wav (10.0 MB)", log_content)
 
@@ -458,13 +458,14 @@ class LoggingIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         log_content = self.read_console_log()
         self.assertIn(
-            "Created trackers for channel Synthetic Channel (-100test)", log_content
+            "[INIT] Trackers created for channel Synthetic Channel (-100test)",
+            log_content,
         )
-        self.assertIn("File from message 7 blacklisted: timeout", log_content)
-        self.assertIn("Message 7 removed from blacklist", log_content)
+        self.assertIn("[BLACKLIST] Message 7 blacklisted: timeout", log_content)
+        self.assertIn("[BLACKLIST] Message 7 removed from blacklist", log_content)
         self.assertIn("Failed to load state from", log_content)
-        self.assertIn("Starting with empty state", log_content)
-        self.assertIn("Filtered out (format): bad.mp3", log_content)
+        self.assertIn("[WARN] Starting with empty state", log_content)
+        self.assertIn("[FILTER] format: bad.mp3", log_content)
         self.assertIn("Missing Telegram locator fields for message 9", log_content)
 
     async def test_downloader_logs_success_skip_and_failure_paths(self):
@@ -523,16 +524,13 @@ class LoggingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(failed["status"], "failed")
 
         log_content = self.read_console_log()
-        self.assertIn("File tracked: song.wav", log_content)
+        self.assertIn("[OK] Downloaded: song__10.wav [02:00] [2.0 MB]", log_content)
         self.assertIn(
-            "Downloaded successfully: song__10.wav [02:00] [2.0 MB]", log_content
-        )
-        self.assertIn(
-            "Skipping file: song.wav [02:00] [2.0 MB] - File already downloaded:",
+            "[SKIP] song.wav [02:00] [2.0 MB] - File already downloaded:",
             log_content,
         )
         self.assertIn("Missing Telegram locator fields for message 11", log_content)
-        self.assertIn("Could not retrieve message 11", log_content)
+        self.assertIn("[FAIL] Could not retrieve message 11", log_content)
 
     async def test_async_concurrent_logging_records_every_message_without_hanging(self):
         setup_logging(ConfigLoader(str(self.config_path)))
@@ -628,13 +626,11 @@ class LoggingMessageCoverageTests(LoggingHarness):
 
         self.assert_logged(
             "Missing required media fields in message 1",
-            "Filtered out (type): clip.wav",
-            "Filtered out (format): track.mp3",
-            "Filtered out (size): track_4.wav",
-            "Filtered out (date): track_5.wav",
-            "Invalid date format: bad-date",
-            "All filters passed: track_7.wav",
-            "Filter error for unknown:",
+            "[FILTER] type: clip.wav",
+            "[FILTER] format: track.mp3",
+            "[FILTER] size: track_4.wav",
+            "[FILTER] date: track_5.wav",
+            "[WARN] Invalid date format: bad-date",
             "Missing Telegram locator fields for message 8",
         )
 
@@ -706,18 +702,18 @@ class LoggingMessageCoverageTests(LoggingHarness):
         self.assertEqual(stats, {})
 
         self.assert_logged(
-            "Channel entity retrieved: good -> Good Channel",
-            "Failed to get entity for bad: entity fail",
+            "[CHANNEL] Entity resolved: good -> Good Channel",
+            "[FAIL] Failed to get entity for bad: entity fail",
             "Parsing messages from channel Good Channel starting after message ID 5",
             "Message 1 has no media",
             "Failed to extract media info from message 2",
             "Found media in message 3: track.wav (audio)",
             "Parsing messages from channel Good Channel from the beginning",
             "Parsing messages from channel Good Channel starting from date 2025-01-01",
-            "Telegram internal issues:",
-            "Waiting 60 seconds before retry...",
-            "Error parsing messages from Good Channel: parse fail",
-            "Error getting channel stats: stats fail",
+            "[WARN] Telegram internal issues:",
+            "[WARN] Waiting 60 seconds before retry...",
+            "[FAIL] Error parsing messages from Good Channel: parse fail",
+            "[FAIL] Error getting channel stats: stats fail",
         )
 
     async def test_download_queue_and_rate_limiter_messages(self):
@@ -984,28 +980,28 @@ class LoggingMessageCoverageTests(LoggingHarness):
         await failing_monitor._monitor_loop()
 
         self.assert_logged(
-            "Worker worker_1 started",
-            "Worker worker_1 downloading: track_21.wav",
-            "Worker worker_1 completed: track_21.wav",
-            "Worker worker_1 failed: track_22.wav",
-            "Worker worker_1 stopped",
-            "Worker worker_2 stopping, current task will be completed",
-            "Worker worker_3 download error: worker download boom",
-            "Worker worker_4 crashed: queue boom",
-            "Coordinator is not running, cannot add task",
+            "[worker_1] Started",
+            "[worker_1] [DOWN] Downloading: track_21.wav",
+            "[worker_1] [OK] Completed: track_21.wav",
+            "[worker_1] [FAIL] Failed: track_22.wav",
+            "[worker_1] Stopped",
+            "[worker_2] Stopping - current task will complete first",
+            "[worker_3] [FAIL] Download error: worker download boom",
+            "[worker_4] [FAIL] Crashed: queue boom",
+            "[FAIL] Coordinator is not running, cannot add task",
             "Coordinator is not running",
-            "Starting download coordinator with 1 workers",
+            "[INIT] Download coordinator starting: 1 workers",
             "Coordinator is already running",
             "Added download task: track_31.wav",
             "Failed to add download task: track_32.wav",
-            "Waiting for all downloads to complete...",
-            "All downloads completed",
-            "Stopping download coordinator...",
-            "Download coordinator stopped",
-            "Starting worker pool with 1 workers",
-            "All 1 workers started",
-            "Worker shutdown timeout exceeded, cancelling remaining worker tasks",
-            "Worker pool stopped",
+            "[WAIT] Waiting for all downloads to complete...",
+            "[WAIT] All downloads completed",
+            "[STOP] Download coordinator stopping...",
+            "[STOP] Download coordinator stopped",
+            "[INIT] Starting worker pool: 1 workers",
+            "[INIT] All 1 workers started",
+            "[WARN] Worker shutdown timeout exceeded",
+            "[STOP] Worker pool stopped",
             "Download monitoring started",
             "Download monitoring stopped",
             "Monitor loop error: monitor boom",
@@ -1077,18 +1073,17 @@ class LoggingMessageCoverageTests(LoggingHarness):
             )
 
         self.assert_logged(
-            "Processing channel: -100test (Synthetic Channel)",
-            "Continuing from last processed message ID: 5",
-            "Channel stats: 5 media files in last 100 messages",
+            "[CHANNEL] Processing: -100test (Synthetic Channel)",
+            "[CHANNEL] Resume from message ID: 5",
+            "[CHANNEL] Stats: 5 media files in last 100 messages",
             "Skipping message 6 - no media",
             "Skipping message 7 - missing required media fields",
-            "Skipping message 8 - missing required media fields",
             "Skipping message 8 - missing Telegram locator fields",
-            "Queued for download: queued.wav [02:05] [2.0 MB]",
-            "Reached file limit (1) for channel -100test in this run.",
-            "Channel -100test processed: 1 files queued, 4 messages processed",
-            "Failed to queue: failed.wav",
-            "Error processing channel -100test: channel boom",
+            "[QUEUE] queued.wav [02:05] [2.0 MB]",
+            "[CHANNEL] File limit reached (1) for -100test",
+            "[CHANNEL] Done: -100test - 1 queued, 4 messages scanned",
+            "[FAIL] Failed to queue: failed.wav",
+            "[FAIL] Error processing channel -100test: channel boom",
         )
 
     async def test_client_messages(self):
@@ -1149,13 +1144,13 @@ class LoggingMessageCoverageTests(LoggingHarness):
                 await client._authenticate()
 
         self.assert_logged(
-            "User already authorized",
-            "Successfully connected to Telegram",
-            "Disconnected from Telegram",
-            "User not authorized, starting authentication",
-            "Failed to connect: connect fail",
-            "Invalid verification code",
-            "Invalid 2FA password",
+            "[AUTH] User already authorized",
+            "[AUTH] Successfully connected to Telegram",
+            "[AUTH] Disconnected from Telegram",
+            "[AUTH] User not authorized, starting authentication",
+            "[FAIL] Failed to connect to Telegram: connect fail",
+            "[AUTH] Invalid verification code",
+            "[AUTH] Invalid 2FA password",
         )
 
 

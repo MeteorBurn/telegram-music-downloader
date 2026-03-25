@@ -39,24 +39,24 @@ class DownloadWorker:
         """Запустить воркер"""
         self.is_running = True
         self.stats["start_time"] = datetime.now()
-        self.logger.info(f"Worker {self.worker_id} started")
+        self.logger.info(f"[{self.worker_id}] Started")
 
         try:
             while self.is_running:
                 await self._process_next_task()
         except asyncio.CancelledError:
-            self.logger.info(f"Worker {self.worker_id} cancelled")
+            self.logger.info(f"[{self.worker_id}] Cancelled")
         except Exception as e:
-            self.logger.error(f"Worker {self.worker_id} crashed: {e}")
+            self.logger.error(f"[{self.worker_id}] [FAIL] Crashed: {e}")
         finally:
-            self.logger.info(f"Worker {self.worker_id} stopped")
+            self.logger.info(f"[{self.worker_id}] Stopped")
 
     async def stop(self):
         """Остановить воркер"""
         self.is_running = False
         if self.current_task:
             self.logger.info(
-                f"Worker {self.worker_id} stopping, current task will be completed"
+                f"[{self.worker_id}] Stopping - current task will complete first"
             )
 
     async def _process_next_task(self):
@@ -82,13 +82,13 @@ class DownloadWorker:
                 self.stats["tasks_completed"] += 1
                 self.queue.task_done(task, outcome="completed", result=result.to_dict())
                 self.logger.info(
-                    f"✓ Worker {self.worker_id} completed: {task.request.filename}"
+                    f"[{self.worker_id}] [OK] Completed: {task.request.filename}"
                 )
             elif outcome == "skipped":
                 self.stats["tasks_skipped"] += 1
                 self.queue.task_done(task, outcome="skipped", result=result.to_dict())
                 self.logger.info(
-                    f"↷ Worker {self.worker_id} skipped: {task.request.filename}"
+                    f"[{self.worker_id}] [SKIP] Skipped: {task.request.filename}"
                 )
             else:
                 # Пытаемся повторить задачу
@@ -96,11 +96,11 @@ class DownloadWorker:
                 if not retry_success:
                     self.stats["tasks_failed"] += 1
                     self.logger.warning(
-                        f"✗ Worker {self.worker_id} failed: {task.request.filename}"
+                        f"[{self.worker_id}] [FAIL] Failed: {task.request.filename}"
                     )
 
         except Exception as e:
-            self.logger.error(f"Worker {self.worker_id} error processing task: {e}")
+            self.logger.error(f"[{self.worker_id}] [FAIL] Error processing task: {e}")
             if self.current_task:
                 self.queue.task_done(
                     self.current_task,
@@ -117,7 +117,7 @@ class DownloadWorker:
         """Скачать файл"""
         try:
             self.logger.info(
-                f"→ Worker {self.worker_id} downloading: {task.request.filename} {task.file_info_str}"
+                f"[{self.worker_id}] [DOWN] Downloading: {task.request.filename} {task.file_info_str}"
             )
 
             # Используем существующий downloader
@@ -133,7 +133,7 @@ class DownloadWorker:
             return outcome
 
         except Exception as e:
-            self.logger.error(f"Worker {self.worker_id} download error: {e}")
+            self.logger.error(f"[{self.worker_id}] [FAIL] Download error: {e}")
             return DownloadOutcome(
                 status="failed", reason=str(e), file_path=None, logged=True
             )
@@ -179,7 +179,7 @@ class WorkerPool:
 
     async def start(self):
         """Запустить все воркеры"""
-        self.logger.info(f"Starting worker pool with {self.num_workers} workers")
+        self.logger.info(f"[INIT] Starting worker pool: {self.num_workers} workers")
 
         for i in range(self.num_workers):
             worker_id = f"worker_{i + 1}"
@@ -192,11 +192,11 @@ class WorkerPool:
             task = asyncio.create_task(worker.start())
             self.worker_tasks[worker_id] = task
 
-        self.logger.info(f"All {self.num_workers} workers started")
+        self.logger.info(f"[INIT] All {self.num_workers} workers started")
 
     async def stop(self):
         """Остановить все воркеры"""
-        self.logger.info("Stopping worker pool...")
+        self.logger.info("[STOP] Stopping worker pool...")
 
         # Сначала просим воркеры остановиться
         for worker in self.workers.values():
@@ -211,7 +211,7 @@ class WorkerPool:
                 )
             except asyncio.TimeoutError:
                 self.logger.warning(
-                    "Worker shutdown timeout exceeded, cancelling remaining worker tasks"
+                    "[WARN] Worker shutdown timeout exceeded, cancelling remaining tasks"
                 )
                 for task in self.worker_tasks.values():
                     task.cancel()
@@ -221,12 +221,12 @@ class WorkerPool:
 
         self.workers.clear()
         self.worker_tasks.clear()
-        self.logger.info("Worker pool stopped")
+        self.logger.info("[STOP] Worker pool stopped")
 
     async def wait_completion(self):
         """Ждать завершения всех задач в очереди"""
         await self.queue.wait_empty()
-        self.logger.info("All download tasks completed")
+        self.logger.debug("[WAIT] All tasks in queue completed")
 
     def get_stats(self) -> Dict[str, Any]:
         """Получить общую статистику пула воркеров"""

@@ -20,7 +20,9 @@ class SessionRunner:
         self.logger = setup_logging(self.config)
         for level, message in self.config.consume_startup_messages():
             emit_session_message(message, level=level, logger=self.logger)
-        self.logger.info("=== Telegram Music Downloader Started ===")
+        self.logger.info("=" * 50)
+        self.logger.info("[START] Telegram Music Downloader Started")
+        self.logger.info("=" * 50)
 
         self.session_manager = create_session_manager(self.config)
         self.tracker_manager = TrackerManager(self.config.get_download_dir())
@@ -34,7 +36,7 @@ class SessionRunner:
         self.channel_processor = None
 
     async def initialize_client(self):
-        self.logger.info("Initializing Telegram client...")
+        self.logger.info("[INIT] Connecting to Telegram...")
         self.client = await create_client(self.config)
 
         await self.client.connect()
@@ -57,7 +59,7 @@ class SessionRunner:
             logger=self.logger,
         )
 
-        self.logger.info("Client initialized successfully")
+        self.logger.info("[INIT] Telegram client ready")
 
     async def run_download_session(self, max_files: int = 0) -> Dict[str, Any]:
         session_results = {
@@ -72,12 +74,12 @@ class SessionRunner:
 
         channels = self.config.get_channels()
         if not channels:
-            self.logger.warning("No channels configured")
+            self.logger.warning("[WARN] No channels configured")
             return session_results
 
         entities = await self.parser.get_channels_entities()
         if not entities:
-            self.logger.error("No accessible channels found")
+            self.logger.error("[FAIL] No accessible channels found")
             return session_results
 
         config_max_files = self.config.get_max_files_per_run()
@@ -87,9 +89,10 @@ class SessionRunner:
             )
 
         self.logger.info(
-            f"Processing {len(entities)} channels with {self.config.get_concurrent_downloads()} concurrent downloads"
+            f"[SESSION] Processing {len(entities)} channel(s), "
+            f"{self.config.get_concurrent_downloads()} concurrent workers, "
+            f"max files: {max_files if max_files > 0 else 'unlimited'}"
         )
-        self.logger.info(f"Max files: {max_files if max_files > 0 else 'unlimited'}")
 
         await self.download_coordinator.start()
 
@@ -98,7 +101,7 @@ class SessionRunner:
             for channel_name, entity in entities:
                 if max_files > 0 and files_queued_total >= max_files:
                     self.logger.info(
-                        f"Reached overall maximum files limit ({max_files}), stopping channel processing"
+                        f"[SESSION] Overall file limit reached ({max_files}), stopping"
                     )
                     break
 
@@ -118,7 +121,7 @@ class SessionRunner:
                 files_queued_total += channel_result["files_queued"]
 
             self.logger.info(
-                "All channels processed, waiting for downloads to complete..."
+                "[SESSION] All channels scanned, waiting for downloads to complete..."
             )
             await self.download_coordinator.wait_completion()
 
@@ -135,11 +138,12 @@ class SessionRunner:
             await self.download_coordinator.stop()
 
     async def show_statistics(self):
-        lines = ["", "=== Download Statistics ==="]
+        sep = "-" * 40
+        lines = [sep, "[STATS] Download Statistics", sep]
         discovered_trackers = self.tracker_manager.load_existing_trackers()
 
         if discovered_trackers:
-            lines.extend(["", "Per-Channel Statistics:"])
+            lines.append("Per-Channel Statistics:")
             total_downloaded = 0
             total_blacklisted = 0
             for tracker_entry in discovered_trackers:
@@ -158,11 +162,16 @@ class SessionRunner:
                 total_downloaded += file_stats["total_downloaded_files"]
                 total_blacklisted += file_stats["total_blacklisted_files"]
                 lines.append(
-                    f"  Channel {channel_id}: {file_stats['total_downloaded_files']} files, {file_stats['total_blacklisted_files']} blacklisted, last safe message {last_safe_message_id}"
+                    f"  {channel_id}: {file_stats['total_downloaded_files']} downloaded, "
+                    f"{file_stats['total_blacklisted_files']} blacklisted, "
+                    f"last message: {last_safe_message_id}"
                 )
-            lines.append("")
-            lines.append(f"Total downloaded files (all channels): {total_downloaded}")
-            lines.append(f"Total blacklisted files (all channels): {total_blacklisted}")
+            lines.append(
+                f"Total downloaded: {total_downloaded} files across all channels"
+            )
+            lines.append(
+                f"Total blacklisted: {total_blacklisted} files across all channels"
+            )
         else:
             lines.append("No channel state found in output_dir yet")
 
@@ -173,23 +182,22 @@ class SessionRunner:
             download_directory = download_stats["download_directory"]
             naming_template = download_stats["naming_template"]
 
-        lines.append("")
-        lines.append(f"Base download directory: {download_directory}")
-        lines.append(f"Naming template: {naming_template}")
-
-        lines.append("")
-        lines.append(f"Concurrent downloads: {self.config.get_concurrent_downloads()}")
-        lines.append(f"Max queue size: {self.config.get_max_queue_size()}")
-        lines.append(f"Rate limit: {self.config.get_requests_per_second()} req/sec")
+        lines.append(sep)
+        lines.append(f"Output dir:  {download_directory}")
+        lines.append(f"Template:    {naming_template}")
+        lines.append(f"Workers:     {self.config.get_concurrent_downloads()}")
+        lines.append(f"Queue size:  {self.config.get_max_queue_size()}")
+        lines.append(f"Rate limit:  {self.config.get_requests_per_second()} req/sec")
 
         filter_summary = self.media_filter.get_filter_summary()
-        lines.append("")
-        lines.append(f"File types filter: {filter_summary['file_types']}")
-        lines.append(f"Format filter: {filter_summary['allowed_formats']}")
+        lines.append(sep)
+        lines.append(f"Types filter:   {filter_summary['file_types']}")
+        lines.append(f"Format filter:  {filter_summary['allowed_formats']}")
         lines.append(
-            f"Size filter: {filter_summary['size_range_mb']['min']}-{filter_summary['size_range_mb']['max']} MB"
+            f"Size filter:    {filter_summary['size_range_mb']['min']}-"
+            f"{filter_summary['size_range_mb']['max']} MB"
         )
-        lines.append("=" * 30)
+        lines.append(sep)
         emit_session_lines(lines, logger=self.logger)
 
     async def show_progress(self):
@@ -202,7 +210,7 @@ class SessionRunner:
         ProgressDisplay.show_progress_once(self.download_coordinator)
 
     async def cleanup_tracker(self) -> int:
-        self.logger.info("Cleaning up trackers for all channels...")
+        self.logger.info("[CLEANUP] Cleaning up trackers for all channels...")
         total_removed = 0
         discovered_trackers = self.tracker_manager.load_existing_trackers()
         for tracker_entry in discovered_trackers:
@@ -213,19 +221,21 @@ class SessionRunner:
             removed_count = file_tracker.cleanup_missing_files()
             if removed_count > 0:
                 self.logger.info(
-                    f"Channel {channel_id}: Removed {removed_count} missing file entries"
+                    f"[CLEANUP] Channel {channel_id}: removed {removed_count} missing file entries"
                 )
                 total_removed += removed_count
 
         self.logger.info(
-            f"Total removed {total_removed} missing file entries from all trackers"
+            f"[CLEANUP] Total removed: {total_removed} missing file entries"
         )
         return total_removed
 
     async def close(self):
         if self.client:
             await self.client.disconnect()
-        self.logger.info("=== Telegram Music Downloader Finished ===")
+        self.logger.info("=" * 50)
+        self.logger.info("[STOP] Telegram Music Downloader Finished")
+        self.logger.info("=" * 50)
 
 
 def config_exists(config_path: str) -> bool:

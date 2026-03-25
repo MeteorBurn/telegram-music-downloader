@@ -67,16 +67,19 @@ async def run_cli(args) -> None:
             await runner.show_statistics()
             results = await runner.run_download_session(args.max_files)
 
+            sep = "-" * 40
             emit_session_lines(
                 [
-                    "",
-                    "=== Session Results ===",
-                    f"Channels processed: {results['channels_processed']}",
-                    f"Messages processed: {results['total_messages_processed']}",
-                    f"Files found: {results['total_files_found']}",
-                    f"Files downloaded: {results['total_files_downloaded']}",
-                    f"Files skipped: {results['total_files_skipped']}",
-                    f"Files failed: {results['total_files_failed']}",
+                    sep,
+                    "[RESULTS] Session Results",
+                    sep,
+                    f"Channels processed:  {results['channels_processed']}",
+                    f"Messages scanned:    {results['total_messages_processed']}",
+                    f"Files found:         {results['total_files_found']}",
+                    f"Files downloaded:    {results['total_files_downloaded']}",
+                    f"Files skipped:       {results['total_files_skipped']}",
+                    f"Files failed:        {results['total_files_failed']}",
+                    sep,
                 ],
                 logger=runner.logger,
             )
