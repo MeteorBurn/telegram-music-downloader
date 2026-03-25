@@ -1,66 +1,71 @@
-# Telegram Music Downloader
+# 🎵 Telegram Music Downloader
 
-Python CLI application for downloading audio and media files from Telegram
-channels or groups you have access to. The project uses Telethon, keeps local
-JSON trackers for resumable runs, and supports concurrent downloads via
-`asyncio`.
+Инструмент командной строки для скачивания аудиофайлов и музыки из Telegram-каналов и групп.
+Поддерживает параллельную загрузку, гибкую фильтрацию, возобновление прерванных сессий и
+отдельное отслеживание загрузок для каждого канала.
 
-## What It Does
+---
 
-- Downloads Telegram media, primarily music files
-- Filters files by type, extension, size, and message date
-- Tracks processed messages and downloaded files per channel
-- Organizes output into separate folders per configured channel
-- Supports concurrent downloads with rate limiting
-- Optionally normalizes downloaded track names
-- Writes logs to console and rotating log files
+## ✨ Возможности
 
-## Supported Media Filters
+- 📥 **Загрузка музыки** из публичных и приватных каналов/групп Telegram
+- ⚡ **Параллельные загрузки** — до 5 файлов одновременно с rate limiting
+- 🔍 **Гибкая фильтрация** по типу, формату, размеру и дате сообщения
+- 📁 **Организация по каналам** — отдельная папка и трекеры на каждый канал
+- 🔄 **Возобновление** — продолжает с последнего обработанного сообщения
+- 🏷️ **Нормализация названий треков** — очистка имён файлов после загрузки (опционально)
+- 📝 **Логирование** — в консоль и в файл с ротацией
 
-The default config is aimed at music collections and includes formats such as:
+---
 
-- `.flac`
-- `.wav`
-- `.aiff`
-- `.m4a`
-- `.mp3`
+## 🛠️ Требования
 
-The actual filter behavior comes from `src/config.yaml` and
-`src/local_config.yaml`.
+- Python **3.9+**
+- Telegram API credentials — `api_id` и `api_hash` с [my.telegram.org](https://my.telegram.org)
+- Доступ к целевым каналам/группам
 
-## Requirements
+---
 
-- Python 3.9+
-- Telegram API credentials from <https://my.telegram.org>
-- Access to the target channels/groups
-
-## Installation
+## 📦 Установка
 
 ```bash
+# 1. Клонировать репозиторий
+git clone https://github.com/MeteorBurn/telegram-music-downloader.git
+cd telegram-music-downloader
+
+# 2. Создать виртуальное окружение
 python -m venv venv
+
+# 3. Активировать окружение
+# Windows
 venv\Scripts\activate
+# macOS / Linux
+source venv/bin/activate
+
+# 4. Установить зависимости
 pip install -r requirements.txt
 ```
 
-On macOS/Linux use:
+### Зависимости
 
-```bash
-source venv/bin/activate
-```
+| Пакет | Версия | Назначение |
+|---|---|---|
+| `telethon` | 1.32.1 | Telegram API клиент |
+| `pyyaml` | 6.0.1 | Чтение YAML-конфигов |
+| `python-dateutil` | 2.8.2 | Разбор дат |
+| `humanize` | 4.8.0 | Человекочитаемые размеры файлов |
+| `aiofiles` | 23.2.1 | Асинхронная работа с файлами |
+| `cryptg` | 0.4.0 | Ускорение шифрования Telegram |
 
-## Configuration
+---
 
-Main config file:
+## ⚙️ Настройка
 
-- `src/config.yaml`
+### Шаг 1 — API credentials
 
-Optional local override for secrets and machine-specific settings:
+Получите `api_id` и `api_hash` на [my.telegram.org](https://my.telegram.org).
 
-- `src/local_config.yaml`
-
-`src/local_config.yaml` overrides values from `src/config.yaml` when present.
-
-### Minimal local config
+Создайте файл `src/local_config.yaml` (он не попадёт в git):
 
 ```yaml
 telegram:
@@ -68,46 +73,40 @@ telegram:
   api_hash: "your_api_hash_here"
 ```
 
-### Important Telegram settings
+> `src/local_config.yaml` переопределяет любые значения из `src/config.yaml`.
 
-The current code reads these Telegram settings:
+### Шаг 2 — Основной конфиг
 
-- `api_id`
-- `api_hash`
-- `session_name`
-- `two_factor_auth`
-
-Note: the app does not read `phone_number` from config. If no valid Telegram
-session exists, `src/client.py` asks for the phone number, login code, and
-optionally the 2FA password interactively.
-
-### Example channel config
+Откройте `src/config.yaml` и настройте нужные параметры:
 
 ```yaml
+telegram:
+  api_id: 12345678           # из my.telegram.org
+  api_hash: "your_api_hash"  # из my.telegram.org
+  session_name: "session"    # имя файла сессии в data/sessions/
+  two_factor_auth: true      # включить, если у вас настроена 2FA
+
 channels:
-  - -1001234567890
-  - "@musicchannel"
-  - -1009876543210
-```
+  - -1001234567890   # числовой ID приватного канала / группы
+  - "@musicchannel"  # юзернейм публичного канала
 
-### Example download config
-
-```yaml
 download:
   output_dir: "./data/downloads"
-  timeout_between_messages: 0.3
-  max_files_per_run: 100
-  concurrent_downloads: 3
+  timeout_between_messages: 0.3  # пауза между сообщениями, сек
+  max_files_per_run: 100         # 0 = без ограничений
+  concurrent_downloads: 3        # воркеры (1–5)
   max_queue_size: 100
   worker_timeout: 300
   rate_limit:
     requests_per_second: 2
     burst_size: 5
-```
 
-### Example filters
+naming:
+  template: "{original_name}__{message_id}"  # шаблон имени файла
+  date_format: "%Y%m%d_%H%M%S"
 
-```yaml
+normalize_track_names: false  # true — очищать имена треков после загрузки
+
 filters:
   file_types: ["audio", "document"]
   formats: [".flac", ".wav", ".aiff", ".m4a", ".mp3"]
@@ -115,163 +114,189 @@ filters:
     min_mb: 1
     max_mb: 500
   date:
-    from: "2025-01-01"
+    from: "2025-01-01"  # YYYY-MM-DD или null
     to: null
+
+logging:
+  level: "INFO"   # DEBUG | INFO | WARNING | ERROR
+  file: "./data/logs/downloader.log"
+  console: true
 ```
 
-### Track name normalization
+### Шаблоны имён файлов
 
-To enable optional filename cleanup after download:
+В поле `naming.template` доступны переменные:
 
-```yaml
-normalize_track_names: true
-```
+| Переменная | Описание |
+|---|---|
+| `{original_name}` | Оригинальное имя файла без расширения |
+| `{message_id}` | ID сообщения в Telegram |
+| `{publish_date}` | Дата публикации сообщения |
+| `{download_date}` | Дата и время загрузки |
+| `{file_size}` | Размер файла в байтах |
+| `{artist}` | Исполнитель (из Telegram аудио-метаданных) |
+| `{title}` | Название трека (из Telegram аудио-метаданных) |
 
-When enabled, the app applies normalization rules from `src/normalizer.py`
-after a successful download.
+---
 
-## How to Get a Channel or Group ID
+## 🔑 Как узнать ID канала или группы
 
-1. Forward a message from the target channel to `@ShowJsonBot`
-2. Find a value like `"chat":{"id":-1001234567890}` in the response
-3. Use that numeric id in `channels:`
+1. Перешлите любое сообщение из нужного канала боту `@ShowJsonBot`
+2. Бот ответит JSON — найдите в нём `"chat":{"id":-1001234567890}`
+3. Скопируйте число целиком (включая знак минус)
 
-Notes:
+> **Публичные каналы** можно указывать по юзернейму: `@channelname`.  
+> **Приватные каналы и группы** требуют числового ID.
 
-- Private channels/groups usually need numeric IDs
-- Public channels can be configured by username such as `@channelname`
-- The configured identifier is used as-is in the final channel folder name
+---
 
-## Usage
+## 🚀 Запуск
 
-Run from the repository root:
+Запускайте из корня репозитория:
 
 ```bash
+# Обычная загрузка
 python src/main.py
-```
 
-### Common commands
-
-```bash
+# Указать конфиг явно
 python src/main.py --config src/config.yaml
-python src/main.py --workers 1
-python src/main.py --workers 5
+
+# Ограничить количество файлов
 python src/main.py --max-files 20
+
+# Задать число воркеров
+python src/main.py --workers 5
+
+# Показать статистику без загрузки
 python src/main.py --stats
+
+# Очистить трекер от записей с удалёнными файлами
 python src/main.py --cleanup
+
+# Показать прогресс текущей сессии
 python src/main.py --progress
 ```
 
-### Command line options
+### 📋 Все параметры CLI
 
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--config` | `-c` | Config file path |
-| `--max-files` | `-m` | Maximum files to download in this run |
-| `--workers` | `-w` | Override configured worker count |
-| `--progress` | `-p` | Show current progress once |
-| `--stats` | `-s` | Show stats for trackers initialized in current run |
-| `--cleanup` | | Remove missing-file entries from trackers initialized in current run |
+| Параметр | Короткий | Тип | По умолчанию | Описание |
+|---|---|---|---|---|
+| `--config` | `-c` | `str` | `src/config.yaml` | Путь к файлу конфигурации |
+| `--max-files` | `-m` | `int` | `0` | Максимум файлов за запуск (0 = без лимита) |
+| `--workers` | `-w` | `int` | из конфига | Количество параллельных воркеров (1–5) |
+| `--stats` | `-s` | флаг | — | Показать статистику и выйти (без загрузки) |
+| `--cleanup` | — | флаг | — | Удалить из трекера записи об отсутствующих файлах |
+| `--progress` | `-p` | флаг | — | Вывести текущий прогресс загрузки |
 
-## Important Behavior Notes
+---
 
-These notes reflect the current code, even where older docs may imply broader
-behavior.
+## 📂 Организация загрузок
 
-- `--progress` is a separate display path, not a full download mode by itself
-- In the current implementation, `python src/main.py --progress` initializes the
-  client and prints progress once; it does not start a download session
-- `--stats` and `--cleanup` do not scan all existing channel folders on disk;
-  they operate on trackers initialized in the current process
-- Message processing and file download tracking are separate; be careful when
-  changing tracker semantics
-- The current concurrency model is `asyncio` tasks and queues, not OS threads
+Каждый канал получает собственную папку внутри `output_dir`:
 
-## How Downloads Are Organized
-
-Each configured channel gets its own root folder under the configured download
-directory.
-
-Folder naming:
-
-- Format: `{SanitizedChannelTitle}_{channel_identifier_from_config}`
-- The title part is sanitized
-- The configured channel id/username part is preserved as-is
-
-Examples:
-
-- `MusicChannel_-1002006273817`
-- `PublicMusic_@publicmusic`
-
-Inside each channel folder, the app stores trackers and downloaded files:
-
-```text
+```
 data/
   downloads/
-    MusicChannel_-1001234567890/
+    MusicChannel_-1001234567890/      ← папка канала
+      message_tracker.json            ← обработанные сообщения
+      file_tracker.json               ← загруженные файлы (хеши)
+      downloads/
+        track1.flac
+        track2.mp3
+    PublicMusic_@musicchannel/
       message_tracker.json
       file_tracker.json
       downloads/
-        song1.flac
-        song2.mp3
+        ...
 ```
 
-## Project Structure
+**Именование папок:** `{ОчищенноеНазвание}_{id_из_config.yaml}`
 
-```text
+- Название канала транслитерируется и очищается от спецсимволов
+- ID канала используется ровно так, как указан в `config.yaml`
+
+Примеры:
+
+| config.yaml | Папка |
+|---|---|
+| `-1002006273817` | `MusicChannel_-1002006273817` |
+| `@publicmusic` | `PublicMusic_@publicmusic` |
+
+---
+
+## 🔄 Первый запуск и авторизация
+
+При первом запуске (или если сессия не существует) приложение попросит:
+
+1. **Номер телефона** — в международном формате, например `+79001234567`
+2. **Код подтверждения** — из Telegram
+3. **Пароль 2FA** — если включена двухфакторная аутентификация
+
+После успешного входа сессия сохраняется в `data/sessions/` — при следующих запусках авторизация не потребуется.
+
+---
+
+## ⚠️ Известные особенности
+
+- `--progress` отображает прогресс один раз и завершается — это не фоновый монитор
+- `--stats` и `--cleanup` работают только с трекерами, инициализированными в текущем запуске
+- Параллельность реализована через `asyncio`-задачи, а не системные потоки
+
+---
+
+## 🔧 Решение проблем
+
+| Проблема | Решение |
+|---|---|
+| Telegram просит авторизацию | Введите телефон, код и пароль 2FA в терминале |
+| Превышены лимиты API | Уменьшите `--workers` или снизьте `requests_per_second` |
+| Нестабильное соединение | Запустите с `--workers 1` |
+| Файлы не скачиваются | Проверьте логи: `data/logs/downloader.log` |
+| Папки/трекеры не создаются | Убедитесь, что `output_dir` доступен для записи |
+
+---
+
+## 🔐 Безопасность
+
+- Не коммитьте `src/local_config.yaml` с реальными credentials
+- Не коммитьте `*.session` файлы
+- Не коммитьте `data/logs/` и загруженные файлы
+
+---
+
+## 📁 Структура проекта
+
+```
 telegram-music-downloader/
-  README.md
-  requirements.txt
-  AGENTS.md
-  src/
-    main.py
-    config.yaml
-    local_config.yaml
-    config_loader.py
-    client.py
-    session_manager.py
-    message_parser.py
-    media_filter.py
-    downloader.py
-    download_queue.py
-    download_worker.py
-    download_coordinator.py
-    download_monitor.py
-    tracker.py
-    channel_utils.py
-    normalizer.py
-    logger.py
-  data/
-    downloads/
-    logs/
-    sessions/
+├── README.md
+├── AGENTS.md
+├── requirements.txt
+├── src/
+│   ├── main.py                  # точка входа, CLI, оркестровка
+│   ├── config.yaml              # основной конфиг
+│   ├── local_config.yaml        # локальные секреты (не в git)
+│   ├── config_loader.py         # загрузка и мерж конфигов
+│   ├── client.py                # авторизация и Telegram-клиент
+│   ├── session_manager.py       # управление файлами сессий
+│   ├── message_parser.py        # обход сообщений и извлечение медиа
+│   ├── media_filter.py          # фильтрация по типу, формату, размеру, дате
+│   ├── downloader.py            # загрузка файлов и именование
+│   ├── download_queue.py        # приоритетная очередь + rate limiter
+│   ├── download_worker.py       # воркеры (asyncio-задачи)
+│   ├── download_coordinator.py  # координация воркеров и очереди
+│   ├── download_monitor.py      # отображение прогресса
+│   ├── tracker.py               # JSON-трекеры сообщений и файлов
+│   ├── channel_utils.py         # именование и пути папок каналов
+│   ├── normalizer.py            # нормализация имён треков
+│   └── logger.py                # настройка логирования с ротацией
+└── data/                        # runtime-данные (не в git)
+    ├── downloads/
+    ├── logs/
+    └── sessions/
 ```
 
-## Development Notes
+---
 
-- There is no formal build system
-- There is no configured linter in the repository
-- There is no committed automated test suite at the moment
-- There is no CI/CD workflow checked into `.github/`
-- A safe code validation step is:
-
-```bash
-python -m compileall src
-```
-
-## Troubleshooting
-
-- If Telegram asks for login, complete the interactive prompts in the terminal
-- If you hit API limits, reduce `--workers` or lower the configured request rate
-- If your connection is unstable, try `python src/main.py --workers 1`
-- Check `data/logs/downloader.log` for operational details
-
-## Security Notes
-
-- Do not commit `src/local_config.yaml` with real credentials
-- Do not commit `*.session` files
-- Do not commit `data/logs/` or downloaded media unless intended
-
-## License
+## 📄 Лицензия
 
 MIT
