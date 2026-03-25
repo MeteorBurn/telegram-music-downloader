@@ -33,7 +33,7 @@ normalize_track_names: false # Enable or disable track names normalization after
 
 filters:
   file_types: ["audio", "document"]  # audio for audio files, document for files
-  formats: [".flac", ".wav", ".aiff", ".m4a", ".mp3"]
+  formats: [".flac", ".wav", ".aiff", ".aif", ".m4a", ".dsf", ".ape", ".wv", ".mp3"]
   size:
     min_mb: 1     # Minimum file size in MB
     max_mb: 500   # Maximum file size in MB

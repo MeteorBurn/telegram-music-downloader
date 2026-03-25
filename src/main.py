@@ -5,8 +5,8 @@ import argparse
 import asyncio
 import sys
 
+from app import SessionRunner, config_exists
 from logger import emit_session_lines, emit_session_message, log_exception
-from session_runner import SessionRunner, config_exists
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

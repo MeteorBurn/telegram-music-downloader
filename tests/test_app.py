@@ -14,8 +14,8 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 
-from session_runner import SessionRunner
-from tracker import TrackerManager
+from app import SessionRunner
+from state import TrackerManager
 
 
 def write_temp_config(config_path: Path, output_dir: Path) -> None:

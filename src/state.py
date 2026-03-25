@@ -1,19 +1,98 @@
 import asyncio
 import hashlib
 import json
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Generic, Optional, Type, TypeVar, Union
 
-from channel_utils import get_channel_downloads_dir, get_channel_state_path
-from domain_models import DownloadRequest
+from channels import get_channel_downloads_dir, get_channel_state_path
 from logger import get_logger
-from state_store import DownloadStateStore, ScanStateStore
+from models import DownloadRequest, DownloadState, ScanState
+
+
+T = TypeVar("T")
+
+
+class JsonStateStore(Generic[T]):
+    def __init__(self, file_path: str, logger_name: str = __name__):
+        self.file_path = Path(file_path)
+        self.logger = get_logger()
+        self.file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def load(self, model_cls: Type[T], defaults: Dict[str, Any]) -> T:
+        if not self.file_path.exists():
+            return model_cls(**defaults)
+
+        try:
+            with open(self.file_path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            merged_payload = dict(defaults)
+            merged_payload.update(payload)
+            return model_cls(**merged_payload)
+        except Exception as exc:
+            self.logger.error(
+                f"[FAIL] Failed to load state from {self.file_path}: {exc}"
+            )
+            self.logger.warning("[WARN] Starting with empty state")
+            return model_cls(**defaults)
+
+    def save(self, state: T) -> None:
+        payload = asdict(state)
+        payload["last_updated"] = datetime.now().isoformat()
+        temp_file = self.file_path.with_suffix(".tmp")
+        with open(temp_file, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, ensure_ascii=False)
+        temp_file.replace(self.file_path)
+
+
+class ScanStateStore(JsonStateStore[ScanState]):
+    SCHEMA_VERSION = 2
+
+    def __init__(self, file_path: str, channel_id: str):
+        super().__init__(file_path)
+        self.channel_id = str(channel_id)
+        self.state = self.load(
+            ScanState,
+            {
+                "schema_version": self.SCHEMA_VERSION,
+                "channel_id": self.channel_id,
+                "last_safe_message_id": None,
+                "total_messages_processed": 0,
+                "last_updated": None,
+            },
+        )
+
+    def update_checkpoint(self, message_id: int, processed_delta: int) -> None:
+        self.state.last_safe_message_id = message_id
+        self.state.total_messages_processed += processed_delta
+        self.save(self.state)
+
+
+class DownloadStateStore(JsonStateStore[DownloadState]):
+    SCHEMA_VERSION = 2
+
+    def __init__(self, file_path: str, channel_id: str):
+        super().__init__(file_path)
+        self.channel_id = str(channel_id)
+        self.state = self.load(
+            DownloadState,
+            {
+                "schema_version": self.SCHEMA_VERSION,
+                "channel_id": self.channel_id,
+                "downloaded_files": {},
+                "blacklisted_message_ids": [],
+                "total_files": 0,
+                "last_updated": None,
+            },
+        )
+
+    def save_state(self) -> None:
+        self.state.total_files = len(self.state.downloaded_files)
+        self.save(self.state)
 
 
 class MessageTracker:
-    """Tracks scan checkpoint state for a specific channel."""
-
     SAFE_CHECKPOINT_OUTCOMES = {"completed", "skipped"}
 
     def __init__(self, tracker_file: str, channel_id: str):
@@ -22,7 +101,6 @@ class MessageTracker:
         self.logger = get_logger()
         self.store = ScanStateStore(str(self.tracker_file), self.channel_id)
         self.channel_id = self.store.state.channel_id
-
         self._pending_message_ids: list[int] = []
         self._message_outcomes: Dict[int, Optional[str]] = {}
 
@@ -101,8 +179,6 @@ class MessageTracker:
 
 
 class FileTracker:
-    """Tracks downloaded files and blacklisted message IDs for a channel."""
-
     def __init__(self, tracker_file: str, channel_id: str):
         self.tracker_file = Path(tracker_file)
         self.channel_id = str(channel_id)
@@ -142,7 +218,6 @@ class FileTracker:
             request = DownloadRequest.from_payload(payload)
             file_hash = self._calculate_file_hash(file_path)
             file_size_mb = request.file_size / (1024 * 1024)
-
             download_date = request.extra_fields.get("download_date", datetime.now())
             if isinstance(download_date, datetime):
                 download_date_str = download_date.isoformat()
@@ -272,13 +347,10 @@ class TrackerManager:
         download_state_path = get_channel_state_path(
             self.base_download_dir, channel_title, channel_id, "download_state.json"
         )
-
         message_tracker = create_message_tracker(str(scan_state_path), channel_id_str)
         file_tracker = create_file_tracker(str(download_state_path), channel_id_str)
-
         self.message_trackers[channel_id_str] = message_tracker
         self.file_trackers[channel_id_str] = file_tracker
-
         self.logger.info(
             f"[INIT] Trackers created for channel {channel_title} ({channel_id_str})"
         )

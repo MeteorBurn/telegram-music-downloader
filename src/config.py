@@ -1,8 +1,8 @@
-import os
 import copy
+import os
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 import yaml
 
@@ -73,10 +73,10 @@ class ConfigLoader:
                             "warning",
                             f"Warning: Local config file is empty, skipping: {self.local_config_path}",
                         )
-            except Exception as e:
+            except Exception as exc:
                 self._record_startup_message(
                     "warning",
-                    f"Warning: Could not load or parse local config file {self.local_config_path}: {e}",
+                    f"Warning: Could not load or parse local config file {self.local_config_path}: {exc}",
                 )
         else:
             self._record_startup_message(
@@ -84,7 +84,6 @@ class ConfigLoader:
                 f"Info: Local config file not found, using base config only: {self.local_config_path}",
             )
 
-        # Set normalization config defaults if not present
         if "normalize_track_names" not in self._config:
             self._config["normalize_track_names"] = False
 

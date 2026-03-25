@@ -11,7 +11,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 
-from tracker import FileTracker, MessageTracker, TrackerManager
+from state import FileTracker, MessageTracker, TrackerManager
 
 
 class StateStoreTests(unittest.TestCase):
@@ -99,6 +99,65 @@ class StateStoreTests(unittest.TestCase):
 
             self.assertEqual(tracker.downloaded_files, {})
             self.assertEqual(tracker.blacklisted_files, set())
+
+
+class MessageTrackerTests(unittest.TestCase):
+    def test_checkpoint_advances_only_on_safe_contiguous_prefix(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tracker_path = Path(temp_dir) / "message_tracker.json"
+            tracker = MessageTracker(str(tracker_path), "channel-1")
+
+            tracker.register_message(10)
+            tracker.register_message(11)
+            tracker.register_message(12)
+
+            tracker.mark_message_outcome(10, "completed")
+            tracker.mark_message_outcome(12, "completed")
+
+            self.assertEqual(tracker.get_last_processed_id(), 10)
+            self.assertEqual(tracker.total_messages_processed, 1)
+
+            tracker.mark_message_outcome(11, "completed")
+
+            self.assertEqual(tracker.get_last_processed_id(), 12)
+            self.assertEqual(tracker.total_messages_processed, 3)
+
+            data = json.loads(tracker_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                sorted(data.keys()),
+                [
+                    "channel_id",
+                    "last_safe_message_id",
+                    "last_updated",
+                    "schema_version",
+                    "total_messages_processed",
+                ],
+            )
+
+    def test_failed_message_stays_replayable_after_restart(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tracker_path = Path(temp_dir) / "message_tracker.json"
+            tracker = MessageTracker(str(tracker_path), "channel-1")
+
+            tracker.register_message(20)
+            tracker.register_message(21)
+            tracker.register_message(22)
+            tracker.mark_message_outcome(20, "completed")
+            tracker.mark_message_outcome(21, "failed")
+            tracker.mark_message_outcome(22, "skipped")
+
+            self.assertEqual(tracker.get_last_processed_id(), 20)
+
+            restarted_tracker = MessageTracker(str(tracker_path), "channel-1")
+            self.assertEqual(restarted_tracker.get_last_processed_id(), 20)
+
+            restarted_tracker.register_message(21)
+            restarted_tracker.register_message(22)
+            restarted_tracker.mark_message_outcome(21, "completed")
+            restarted_tracker.mark_message_outcome(22, "skipped")
+
+            self.assertEqual(restarted_tracker.get_last_processed_id(), 22)
+            self.assertEqual(restarted_tracker.total_messages_processed, 3)
 
 
 if __name__ == "__main__":

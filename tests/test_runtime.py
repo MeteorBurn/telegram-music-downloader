@@ -1,8 +1,10 @@
+import asyncio
 import copy
 import logging
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,9 +15,11 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 
-from channel_processor import ChannelProcessor
-from download_models import DownloadRequest
-from tracker import TrackerManager
+from channels import ChannelProcessor
+from models import DownloadOutcome, DownloadRequest
+from runtime import DownloadCoordinator, DownloadQueue, DownloadTask, RateLimiter
+from state import MessageTracker, TrackerManager
+from telegram import TelegramDocumentLocator
 
 
 class FakeParser:
@@ -66,6 +70,67 @@ class FakeDownloadCoordinator:
 
         self.queued_tasks.append((request, file_info_str))
         return True
+
+
+class FakeDownloader:
+    def __init__(self, outcomes=None, delay: float = 0.0):
+        self.outcomes = outcomes or {}
+        self.delay = delay
+        self.attempts = {}
+
+    async def download_media_file(self, media_info, _file_info_str=""):
+        request = DownloadRequest.from_payload(media_info)
+        message_id = request.message_id
+        self.attempts[message_id] = self.attempts.get(message_id, 0) + 1
+
+        if self.delay > 0:
+            await asyncio.sleep(self.delay)
+
+        status = self.outcomes.get(message_id, "success")
+        if callable(status):
+            status = status(self.attempts[message_id])
+
+        if status == "success":
+            return DownloadOutcome(
+                status="success", file_path=f"file_{message_id}.bin"
+            ).to_dict()
+
+        if status == "skipped":
+            return DownloadOutcome(
+                status="skipped", reason="already exists", file_path=None
+            ).to_dict()
+
+        return DownloadOutcome(
+            status="failed", reason="synthetic failure", file_path=None
+        ).to_dict()
+
+
+class FakeConfig:
+    def __init__(self, workers: int = 1):
+        self.workers = workers
+
+    def get_concurrent_downloads(self) -> int:
+        return self.workers
+
+    def get_max_queue_size(self) -> int:
+        return 50
+
+    def get_requests_per_second(self) -> float:
+        return 1000.0
+
+    def get_burst_size(self) -> int:
+        return 1000
+
+
+def build_media_info(message_id: int) -> dict:
+    return {
+        "message_id": message_id,
+        "channel_id": "test-channel",
+        "filename": f"track_{message_id}.mp3",
+        "file_size": 1024,
+        "type": "audio",
+        "mime_type": "audio/mpeg",
+    }
 
 
 class ChannelProcessorTests(unittest.IsolatedAsyncioTestCase):
@@ -286,6 +351,127 @@ class DownloadRequestTests(unittest.TestCase):
         rebuilt_media_info = request.to_media_info()
         self.assertEqual(rebuilt_media_info["custom_field"], "kept")
         self.assertEqual(rebuilt_media_info["type"], "audio")
+
+
+class DownloadQueueTests(unittest.IsolatedAsyncioTestCase):
+    async def test_retry_keeps_join_consistent(self):
+        queue = DownloadQueue(max_size=10)
+        task = DownloadTask(
+            request=DownloadRequest.from_media_info(build_media_info(101))
+        )
+
+        self.assertTrue(await queue.put(task))
+
+        first_attempt = await queue.get(timeout=0.1)
+        self.assertIsNotNone(first_attempt)
+        self.assertTrue(await queue.retry_task(first_attempt))
+
+        second_attempt = await queue.get(timeout=0.1)
+        self.assertIs(second_attempt, task)
+        self.assertEqual(second_attempt.attempts, 1)
+
+        queue.task_done(
+            second_attempt, outcome="completed", result={"status": "success"}
+        )
+        await asyncio.wait_for(queue.wait_empty(), timeout=0.5)
+
+        stats = queue.get_stats()
+        self.assertEqual(stats["total_added"], 1)
+        self.assertEqual(stats["total_retried"], 1)
+        self.assertEqual(stats["completed_tasks"], 1)
+        self.assertEqual(stats["failed_tasks"], 0)
+
+
+class DownloadCoordinatorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_terminal_outcomes_are_reported_honestly(self):
+        downloader = FakeDownloader(outcomes={1: "success", 2: "skipped", 3: "failed"})
+        coordinator = DownloadCoordinator(downloader, FakeConfig(workers=1))
+
+        await coordinator.start()
+        try:
+            for message_id in (1, 2, 3):
+                added = await coordinator.add_download_task(
+                    build_media_info(message_id)
+                )
+                self.assertTrue(added)
+
+            await asyncio.wait_for(coordinator.wait_completion(), timeout=2.0)
+            summary = coordinator.get_session_summary()
+            progress = coordinator.get_progress_info()
+
+            self.assertEqual(summary["files_completed"], 1)
+            self.assertEqual(summary["files_skipped"], 1)
+            self.assertEqual(summary["files_failed"], 1)
+            self.assertEqual(progress["terminal_tasks"], 3)
+            self.assertEqual(progress["completed_tasks"], 1)
+            self.assertEqual(progress["skipped_tasks"], 1)
+            self.assertEqual(progress["failed_tasks"], 1)
+        finally:
+            await coordinator.stop()
+
+    async def test_stop_shuts_workers_down_and_fails_pending_tasks(self):
+        downloader = FakeDownloader(delay=0.15)
+        coordinator = DownloadCoordinator(downloader, FakeConfig(workers=1))
+
+        await coordinator.start()
+        try:
+            for message_id in (10, 11, 12):
+                added = await coordinator.add_download_task(
+                    build_media_info(message_id)
+                )
+                self.assertTrue(added)
+
+            await asyncio.sleep(0.02)
+            await asyncio.wait_for(coordinator.stop(), timeout=2.0)
+
+            summary = coordinator.get_session_summary()
+            self.assertEqual(summary["files_queued"], 3)
+            self.assertEqual(summary["files_completed"], 1)
+            self.assertEqual(summary["files_failed"], 2)
+        finally:
+            if coordinator.is_running:
+                await coordinator.stop()
+
+
+class RateLimiterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_rate_limiter_acquire_is_non_blocking_with_large_burst(self):
+        limiter = RateLimiter(requests_per_second=1000.0, burst_size=10)
+        await asyncio.wait_for(limiter.acquire("worker-test"), timeout=0.5)
+
+
+class TelegramLocatorTests(unittest.TestCase):
+    def test_locator_rejects_missing_required_fields(self):
+        locator = TelegramDocumentLocator()
+        message = locator.create_message_for_request(
+            {
+                "message_id": 1,
+                "channel_id": "chan",
+                "filename": "track.wav",
+                "file_size": 100,
+                "type": "audio",
+            }
+        )
+
+        self.assertIsNone(message)
+
+    def test_locator_creates_message_for_valid_request(self):
+        locator = TelegramDocumentLocator()
+        message = locator.create_message_for_request(
+            {
+                "message_id": 1,
+                "channel_id": "chan",
+                "filename": "track.wav",
+                "file_size": 100,
+                "type": "audio",
+                "mime_type": "audio/vnd.wave",
+                "document_id": 10,
+                "access_hash": 20,
+                "file_reference": b"ref",
+            }
+        )
+
+        self.assertIsNotNone(message)
+        self.assertEqual(message.media.document.id, 10)
 
 
 if __name__ == "__main__":

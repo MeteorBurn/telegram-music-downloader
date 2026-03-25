@@ -17,27 +17,32 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 
-from channel_processor import ChannelProcessor
-from client import (
+from app import SessionManager, SessionRunner
+from channels import ChannelProcessor, MediaFilter
+from config import ConfigLoader
+from download import TelegramDownloader
+from logger import PROJECT_LOGGER_NAME, setup_logging
+from models import DownloadOutcome, DownloadRequest
+from runtime import (
+    DownloadCoordinator,
+    DownloadMonitor,
+    DownloadQueue,
+    DownloadTask,
+    DownloadWorker,
+    RateLimiter,
+    WorkerPool,
+)
+from state import DownloadStateStore, MessageTracker, TrackerManager
+from telegram import (
+    DocumentAttributeFilename,
     PasswordHashInvalidError,
     PhoneCodeInvalidError,
+    RpcMcgetFailError,
     SessionPasswordNeededError,
+    TelegramDocumentLocator,
     TelegramMusicClient,
+    MessageParser,
 )
-from config_loader import ConfigLoader
-from download_coordinator import DownloadCoordinator
-from download_monitor import DownloadMonitor
-from download_queue import DownloadQueue, DownloadTask, RateLimiter
-from download_worker import DownloadWorker, WorkerPool
-from downloader import TelegramDownloader
-from logger import PROJECT_LOGGER_NAME, setup_logging
-from media_filter import MediaFilter
-from message_parser import DocumentAttributeFilename, MessageParser, RpcMcgetFailError
-from session_manager import SessionManager
-from session_runner import SessionRunner
-from state_store import DownloadStateStore
-from telegram_locator import TelegramDocumentLocator
-from tracker import MessageTracker, TrackerManager
 
 
 def write_temp_config(
@@ -184,11 +189,11 @@ class FakeOutcomeDownloader:
 
         request = media_info if hasattr(media_info, "message_id") else None
         if request is None:
-            from download_models import DownloadRequest, DownloadOutcome
+            from models import DownloadRequest, DownloadOutcome
 
             request = DownloadRequest.from_payload(media_info)
         else:
-            from download_models import DownloadOutcome
+            from models import DownloadOutcome
 
         if self.delay:
             await asyncio.sleep(self.delay)
@@ -282,7 +287,7 @@ class ChannelFakeCoordinator:
         self.queued = []
 
     async def add_download_task(self, media_info, file_info_str=""):
-        from download_models import DownloadRequest
+        from models import DownloadRequest
 
         request = DownloadRequest.from_payload(media_info)
         self.queued.append((request, file_info_str))
@@ -682,7 +687,7 @@ class LoggingMessageCoverageTests(LoggingHarness):
             ),
             self.config,
         )
-        with patch("message_parser.asyncio.sleep", new=AsyncMock()) as sleep_mock:
+        with patch("telegram.asyncio.sleep", new=AsyncMock()) as sleep_mock:
             async for _ in rpc_parser.parse_messages(success_entity):
                 pass
             sleep_mock.assert_awaited()
@@ -719,12 +724,10 @@ class LoggingMessageCoverageTests(LoggingHarness):
     async def test_download_queue_and_rate_limiter_messages(self):
         queue = DownloadQueue(max_size=3)
         task1 = DownloadTask(request=SimpleNamespace(**build_media_info(11)))
-        task1.request = __import__("download_models").DownloadRequest.from_payload(
+        task1.request = __import__("models").DownloadRequest.from_payload(
             build_media_info(11)
         )
-        task2 = __import__("download_models").DownloadRequest.from_payload(
-            build_media_info(12)
-        )
+        task2 = __import__("models").DownloadRequest.from_payload(build_media_info(12))
         duplicate = DownloadTask(request=task1.request)
 
         self.assertTrue(await queue.put(DownloadTask(request=task1.request)))
@@ -739,7 +742,7 @@ class LoggingMessageCoverageTests(LoggingHarness):
         queue.task_done(skipped_task, outcome="skipped", result={"status": "skipped"})
 
         failed_task = DownloadTask(
-            request=__import__("download_models").DownloadRequest.from_payload(
+            request=__import__("models").DownloadRequest.from_payload(
                 build_media_info(13)
             )
         )
@@ -748,7 +751,7 @@ class LoggingMessageCoverageTests(LoggingHarness):
         queue.task_done(failed_task, outcome="failed", result={"status": "failed"})
 
         retry_task = DownloadTask(
-            request=__import__("download_models").DownloadRequest.from_payload(
+            request=__import__("models").DownloadRequest.from_payload(
                 build_media_info(14)
             )
         )
@@ -757,7 +760,7 @@ class LoggingMessageCoverageTests(LoggingHarness):
         self.assertTrue(await queue.retry_task(retry_task))
 
         max_retry_task = DownloadTask(
-            request=__import__("download_models").DownloadRequest.from_payload(
+            request=__import__("models").DownloadRequest.from_payload(
                 build_media_info(15)
             ),
             attempts=2,
@@ -768,7 +771,7 @@ class LoggingMessageCoverageTests(LoggingHarness):
         self.assertFalse(await queue.retry_task(max_retry_task))
 
         callback_task = DownloadTask(
-            request=__import__("download_models").DownloadRequest.from_payload(
+            request=__import__("models").DownloadRequest.from_payload(
                 build_media_info(16)
             ),
             outcome_callback=lambda *_args: (_ for _ in ()).throw(
@@ -785,9 +788,9 @@ class LoggingMessageCoverageTests(LoggingHarness):
             self.assertFalse(
                 await queue.put(
                     DownloadTask(
-                        request=__import__(
-                            "download_models"
-                        ).DownloadRequest.from_payload(build_media_info(17))
+                        request=__import__("models").DownloadRequest.from_payload(
+                            build_media_info(17)
+                        )
                     )
                 )
             )
@@ -795,9 +798,9 @@ class LoggingMessageCoverageTests(LoggingHarness):
             self.assertFalse(
                 await queue.put(
                     DownloadTask(
-                        request=__import__(
-                            "download_models"
-                        ).DownloadRequest.from_payload(build_media_info(18))
+                        request=__import__("models").DownloadRequest.from_payload(
+                            build_media_info(18)
+                        )
                     )
                 )
             )
@@ -805,7 +808,7 @@ class LoggingMessageCoverageTests(LoggingHarness):
             self.assertIsNone(await queue.get(timeout=0.1))
 
         failed_requeue = DownloadTask(
-            request=__import__("download_models").DownloadRequest.from_payload(
+            request=__import__("models").DownloadRequest.from_payload(
                 build_media_info(19)
             )
         )
@@ -816,7 +819,7 @@ class LoggingMessageCoverageTests(LoggingHarness):
 
         limiter = RateLimiter(requests_per_second=1.0, burst_size=1)
         await limiter.acquire("worker-a")
-        with patch("download_queue.asyncio.sleep", new=AsyncMock()) as sleep_mock:
+        with patch("runtime.asyncio.sleep", new=AsyncMock()) as sleep_mock:
             await limiter.acquire("worker-a")
             sleep_mock.assert_awaited()
 
@@ -838,7 +841,7 @@ class LoggingMessageCoverageTests(LoggingHarness):
         )
 
     async def test_worker_pool_coordinator_and_monitor_messages(self):
-        from download_models import DownloadRequest
+        from models import DownloadRequest
 
         class QueueForProcess:
             def __init__(self, task):
@@ -956,7 +959,7 @@ class LoggingMessageCoverageTests(LoggingHarness):
         async def instant_worker_start(*_args, **_kwargs):
             return None
 
-        with patch("download_worker.DownloadWorker.start", new=instant_worker_start):
+        with patch("runtime.DownloadWorker.start", new=instant_worker_start):
             await pool.start()
         pool.queue.wait_empty = AsyncMock()
         await pool.wait_completion()
@@ -1088,9 +1091,9 @@ class LoggingMessageCoverageTests(LoggingHarness):
 
     async def test_client_messages(self):
         with (
-            patch("client.TELETHON_AVAILABLE", True),
+            patch("telegram.TELETHON_AVAILABLE", True),
             patch(
-                "client.TelegramClient", return_value=FakeAuthClient(authorized=True)
+                "telegram.TelegramClient", return_value=FakeAuthClient(authorized=True)
             ),
         ):
             client = TelegramMusicClient(1, "hash", "session")
@@ -1098,9 +1101,9 @@ class LoggingMessageCoverageTests(LoggingHarness):
             await client.disconnect()
 
         with (
-            patch("client.TELETHON_AVAILABLE", True),
+            patch("telegram.TELETHON_AVAILABLE", True),
             patch(
-                "client.TelegramClient", return_value=FakeAuthClient(authorized=False)
+                "telegram.TelegramClient", return_value=FakeAuthClient(authorized=False)
             ),
             patch("builtins.input", side_effect=["+123", "9999"]),
         ):
@@ -1108,9 +1111,9 @@ class LoggingMessageCoverageTests(LoggingHarness):
             self.assertTrue(await client.connect())
 
         with (
-            patch("client.TELETHON_AVAILABLE", True),
+            patch("telegram.TELETHON_AVAILABLE", True),
             patch(
-                "client.TelegramClient",
+                "telegram.TelegramClient",
                 return_value=FakeAuthClient(connect_error=RuntimeError("connect fail")),
             ),
         ):
