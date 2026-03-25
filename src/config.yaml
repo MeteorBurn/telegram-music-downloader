@@ -3,7 +3,6 @@
 telegram:
   api_id: 12345678  # Your API ID from my.telegram.org (example)
   api_hash: "your_api_hash_here"  # Your API Hash (example)
-  session_name: "session"
   two_factor_auth: true  # Enable if you have 2FA
 
 channels:
@@ -44,5 +43,4 @@ filters:
 
 logging:
   level: "INFO"  # DEBUG, INFO, WARNING, ERROR
-  file: "./data/logs/downloader.log"
   console: true

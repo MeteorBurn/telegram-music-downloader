@@ -11,10 +11,10 @@ and per-channel download tracking.
 - 📥 **Download music** from public and private Telegram channels/groups
 - ⚡ **Concurrent downloads** — up to 5 files at once with built-in rate limiting
 - 🔍 **Flexible filtering** by file type, format, size, and message date
-- 📁 **Per-channel organization** — separate folder and trackers for each channel
+- 📁 **Per-channel organization** — separate folder and versioned state files for each channel
 - 🔄 **Resumable sessions** — continues from the last processed message
 - 🏷️ **Track name normalization** — optional cleanup of downloaded filenames
-- 📝 **Logging** — to console and rotating log file
+- 📝 **Centralized logging** — one project logger writes a full session transcript to console and `output_dir/console.log`
 
 ---
 
@@ -74,6 +74,7 @@ telegram:
 ```
 
 > `src/local_config.yaml` overrides any values from `src/config.yaml`.
+> In normal local usage, prefer launching with `--config src/local_config.yaml`.
 
 ### Step 2 — Main config
 
@@ -83,7 +84,6 @@ Edit `src/config.yaml` to set up channels, filters, and download options:
 telegram:
   api_id: 12345678           # from my.telegram.org
   api_hash: "your_api_hash"  # from my.telegram.org
-  session_name: "session"    # session filename in data/sessions/
   two_factor_auth: true      # enable if you use 2FA
 
 channels:
@@ -119,9 +119,11 @@ filters:
 
 logging:
   level: "INFO"   # DEBUG | INFO | WARNING | ERROR
-  file: "./data/logs/downloader.log"
   console: true
 ```
+
+`console.log` is derived from `download.output_dir`. There is no separate
+configurable log file path in YAML.
 
 ### Filename template variables
 
@@ -158,6 +160,7 @@ python src/main.py
 
 # Use a specific config file
 python src/main.py --config src/config.yaml
+python src/main.py --config src/local_config.yaml
 
 # Limit number of files per run
 python src/main.py --max-files 20
@@ -175,6 +178,9 @@ python src/main.py --cleanup
 python src/main.py --progress
 ```
 
+If you already activated the virtual environment in PowerShell, the same commands
+can be run as `python -m ...` without the full `venv\Scripts\python.exe` path.
+
 ### 📋 All CLI options
 
 | Option | Short | Type | Default | Description |
@@ -184,7 +190,7 @@ python src/main.py --progress
 | `--workers` | `-w` | `int` | from config | Number of concurrent workers (1–5) |
 | `--stats` | `-s` | flag | — | Show statistics and exit (no downloads) |
 | `--cleanup` | — | flag | — | Remove entries for missing files from trackers |
-| `--progress` | `-p` | flag | — | Print current download progress once |
+| `--progress` | `-p` | flag | — | Print live in-process progress only |
 
 ---
 
@@ -195,18 +201,21 @@ Each configured channel gets its own folder inside `output_dir`:
 ```
 data/
   downloads/
+    console.log                         ← shared session log for this output_dir
     MusicChannel_-1001234567890/      ← channel folder
-      message_tracker.json            ← processed message IDs
-      file_tracker.json               ← downloaded files (hashes)
+      scan_state.json                 ← scan checkpoint state
+      download_state.json             ← downloaded files state
       downloads/
         track1.flac
         track2.mp3
     PublicMusic_@musicchannel/
-      message_tracker.json
-      file_tracker.json
+      scan_state.json
+      download_state.json
       downloads/
         ...
 ```
+
+The Telegram login session is always stored as `telegram.session` in the project root.
 
 **Folder naming:** `{SanitizedTitle}_{channel_id_from_config}`
 
@@ -230,15 +239,51 @@ On first run (or when no session file exists), the app will ask for:
 2. **Verification code** — sent to your Telegram app
 3. **2FA password** — if two-factor authentication is enabled
 
-Once authenticated, the session is saved to `data/sessions/` and reused on subsequent runs.
+Once authenticated, the session is saved to `telegram.session` in the project root and reused on subsequent runs.
 
 ---
 
 ## ⚠️ Behavior notes
 
-- `--progress` prints progress once and exits — it is not a live background monitor
-- `--stats` and `--cleanup` only operate on trackers initialized in the current process run
+- `--progress` reports only a currently running in-process download session; it is not a persisted historical progress report
+- `--stats` and `--cleanup` scan the current `output_dir` for `scan_state.json` and `download_state.json`
 - Concurrency is implemented with `asyncio` tasks and queues, not OS threads
+- The current persisted schema is intended for clean usage; legacy `message_tracker.json` / `file_tracker.json` are not used anymore
+- Runtime modules use one shared project logger from `src/logger.py`
+- `console.log` is a session transcript: startup, queueing, worker events, download results, summaries, and top-level errors are mirrored there
+- Live redraw progress stays screen-only so `console.log` remains readable instead of storing every transient refresh line
+
+---
+
+## 🧪 Tests
+
+The repository includes a small synthetic `unittest` suite.
+
+```bash
+python -m unittest discover -s tests
+python -m unittest tests.test_logging
+python -m unittest tests.test_logging.LoggingIntegrationTests
+python -m unittest tests.test_phase1_refactor
+python -m unittest tests.test_session_runner
+python -m unittest tests.test_state_store
+python -m unittest tests.test_downloader_contracts
+```
+
+### Logging verification
+
+Useful targeted commands when working on the centralized logger:
+
+```bash
+python -m unittest tests.test_logging -v
+python -m unittest tests.test_logging.LoggingIntegrationTests.test_async_concurrent_logging_records_every_message_without_hanging -v
+```
+
+The synthetic logging suite covers:
+
+- centralized logger setup and idempotent handler initialization
+- mirroring of session/CLI output into `console.log`
+- worker/coordinator/queue/tracker/filter/parser/client logging paths
+- async concurrent writes into one logger without dropping expected messages
 
 ---
 
@@ -249,8 +294,9 @@ Once authenticated, the session is saved to `data/sessions/` and reused on subse
 | Telegram requests login | Follow the interactive prompts in the terminal |
 | API rate limit errors | Lower `--workers` or reduce `requests_per_second` |
 | Unstable connection | Run with `--workers 1` |
-| Files not downloading | Check `data/logs/downloader.log` for details |
+| Files not downloading | Check `output_dir/console.log` for details |
 | Folders not created | Ensure `output_dir` is writable |
+| Need to verify full session flow | Inspect `output_dir/console.log`; it should contain queueing, worker, download, summary, and shutdown lines |
 
 ---
 
@@ -258,7 +304,7 @@ Once authenticated, the session is saved to `data/sessions/` and reused on subse
 
 - Do not commit `src/local_config.yaml` with real credentials
 - Do not commit `*.session` files
-- Do not commit `data/logs/` or downloaded media
+- Do not commit `output_dir/console.log` or downloaded media
 
 ---
 
@@ -269,8 +315,10 @@ telegram-music-downloader/
 ├── README.md
 ├── AGENTS.md
 ├── requirements.txt
+├── telegram.session             # created on first successful Telegram login
 ├── src/
-│   ├── main.py                  # entry point, CLI, orchestration
+│   ├── main.py                  # CLI entry point
+│   ├── session_runner.py        # session orchestration
 │   ├── config.yaml              # main config file
 │   ├── local_config.yaml        # local secrets (not in git)
 │   ├── config_loader.py         # config loading and merging
@@ -278,20 +326,32 @@ telegram-music-downloader/
 │   ├── session_manager.py       # session file management
 │   ├── message_parser.py        # message traversal and media extraction
 │   ├── media_filter.py          # filtering by type, format, size, date
+│   ├── domain_models.py         # shared typed domain/state models
 │   ├── downloader.py            # file download and naming
+│   ├── telegram_locator.py      # Telegram document reconstruction adapter
 │   ├── download_queue.py        # priority queue and rate limiter
 │   ├── download_worker.py       # asyncio worker tasks
 │   ├── download_coordinator.py  # worker pool coordination
 │   ├── download_monitor.py      # progress display
-│   ├── tracker.py               # persistent JSON message/file trackers
+│   ├── channel_processor.py     # per-channel orchestration and queueing
+│   ├── tracker.py               # state-aware scan/download trackers
+│   ├── state_store.py           # versioned JSON state stores
 │   ├── channel_utils.py         # channel folder naming and paths
 │   ├── normalizer.py            # track name normalization
-│   └── logger.py                # logging setup with rotation
-└── data/                        # runtime data (not in git)
-    ├── downloads/
-    ├── logs/
-    └── sessions/
+│   └── logger.py                # centralized session logger and transcript helpers
+└── tests/                       # synthetic tests and current local output dir
 ```
+
+### Verified session example
+
+A real local smoke run with `--config src/local_config.yaml --workers 5 --max-files 30`
+completed successfully and produced matching queue/completion counts in
+`tests/console.log`:
+
+- `Queued for download:` = `30`
+- `Downloaded successfully:` = `30`
+- `Worker worker_[1-5] started` = `5`
+- `Worker worker_[1-5] stopped` = `5`
 
 ---
 
