@@ -1,295 +1,276 @@
 # Telegram Music Downloader
 
-> **🤖 AI-Powered Development:** This project was fully developed with the assistance of [Claude AI](https://www.anthropic.com/claude) by Anthropic. The entire codebase, architecture, and documentation were created through AI-assisted development.
+Python CLI application for downloading audio and media files from Telegram
+channels or groups you have access to. The project uses Telethon, keeps local
+JSON trackers for resumable runs, and supports concurrent downloads via
+`asyncio`.
 
-A Python-based application designed to download audio files (primarily music) from specified Telegram channels. It offers features like **concurrent downloads**, advanced filtering, download tracking, and robust logging.
+## What It Does
 
-## Features
+- Downloads Telegram media, primarily music files
+- Filters files by type, extension, size, and message date
+- Tracks processed messages and downloaded files per channel
+- Organizes output into separate folders per configured channel
+- Supports concurrent downloads with rate limiting
+- Optionally normalizes downloaded track names
+- Writes logs to console and rotating log files
 
-*   **🚀 Concurrent Downloads**: Download 1-5 files simultaneously for faster processing with intelligent rate limiting.
-*   **📥 Download from Telegram**: Fetches audio files from public or private Telegram channels you have access to.
-*   **🔍 Advanced Filtering**:
-    *   Filter by file type (e.g., audio, document).
-    *   Filter by specific file formats (e.g., `.mp3`, `.flac`, `.wav`).
-    *   Filter by file size (min/max MB).
-    *   Filter by message date range.
-*   **📊 Download & Message Tracking**: Tracks both downloaded files and processed messages using separate, robust tracker modules (per-channel). Prevents duplicates and enables reliable recovery.
-*   **📁 Per-Channel Organization**: Each channel/group has its own folder with separate trackers for independent progress tracking.
-*   **📝 Robust Logging**: Comprehensive and resilient logging to both console and file, including log rotation and logger health checks.
-*   **📁 Customizable File Naming**: Define templates for naming downloaded files.
-*   **✨ Track Name Normalization & Cleanup**: Automatically cleans up and standardizes track names after download (optional, see below).
-*   **⚙️ Secure Configuration**:
-    *   Main application settings are managed in `src/config.yaml`.
-*   **🔄 Real-time Progress Monitoring**: Live progress tracking with download statistics and worker status.
+## Supported Media Filters
 
-### Track Name Normalization & Cleanup
+The default config is aimed at music collections and includes formats such as:
 
-The downloader can automatically clean and standardize the names of downloaded audio tracks. This feature removes unnecessary tags, extra spaces, technical info, and other "garbage" from file names, making your downloaded music tidy and consistent.
+- `.flac`
+- `.wav`
+- `.aiff`
+- `.m4a`
+- `.mp3`
 
-- **How it works:**
-    - Applies a series of normalization functions to each file name after download (removes message IDs, extra spaces, bracket artifacts, technical tags, etc).
-    - Helps prevent messy or unreadable filenames from Telegram uploads.
-- **How to enable:**
-    - In your `src/config.yaml` or `src/local_config.yaml`, set:
-      ```yaml
-      normalize_track_names: true
-      ```
-    - By default, this feature is **disabled** (`false`).
-- **When enabled:**
-    - All normalization and cleanup rules are applied automatically to every downloaded track.
-    - If disabled, file names are left as-is.
-
-### 🚀 Concurrent Downloads
-
-The application supports downloading multiple files simultaneously to significantly speed up the process while respecting Telegram's API limits.
-
-- **How it works:**
-    - Uses a producer-consumer pattern with a priority queue
-    - Downloads 1-5 files concurrently (configurable)
-    - Files download in chronological order (by message ID, oldest first)
-    - Intelligent rate limiting prevents API blocking
-    - Thread-safe file tracking prevents duplicates
-    - Real-time progress monitoring with worker status
-
-- **Configuration:**
-    ```yaml
-    download:
-      concurrent_downloads: 3      # Number of simultaneous downloads (1-5)
-      max_queue_size: 100         # Maximum queue size
-      worker_timeout: 300         # Worker timeout in seconds
-      rate_limit:
-        requests_per_second: 2    # API rate limit
-        burst_size: 5            # Burst capacity
-    ```
-
-- **Command line options:**
-    ```bash
-    # Use specific number of workers (overrides config)
-    python src/main.py --workers 1    # Single-threaded mode
-    python src/main.py --workers 5    # Maximum concurrency
-    
-    # Show real-time progress
-    python src/main.py --progress
-    ```
-
-- **Performance benefits:**
-    - **3x faster** downloads with 3 concurrent workers
-    - **5x faster** with 5 workers (for large files)
-    - Automatic fallback to single-threaded mode if needed
-    - Smart queue management prevents memory issues
-
-## Setup
-
-1. **Clone the repository:**
-    ```bash
-    git clone https://github.com/yourusername/telegram-music-downloader.git
-    cd telegram-music-downloader
-    ```
-
-2. **Create and activate a virtual environment:**
-    ```bash
-    python -m venv venv
-    # On Windows
-    venv\Scripts\activate
-    # On macOS/Linux
-    source venv/bin/activate
-    ```
-
-3. **Install dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-4. **Configure the application:**
-    - Edit `src/config.yaml` for main settings (channels, filters, download directory, etc).
-    - Create `src/local_config.yaml` and add your Telegram `api_id` and `api_hash` (and optionally `phone_number`).
-      Example `src/local_config.yaml`:
-      ```yaml
-      telegram:
-        api_id: 1234567
-        api_hash: "your_api_hash_here"
-        # phone_number: "+1234567890" # If needed for login
-      ```
-
-### How to Get Channel or Group ID
-
-To specify channels in `config.yaml`, you need their numeric IDs. Here's how to get them:
-
-1. Forward any message from the target channel to @ShowJsonBot
-2. The bot will reply with JSON data containing channel information
-3. Look for `"chat":{"id":-1001234567890}` in the response
-4. Use the number after `"id":` (including the minus sign)
-
-**Important Notes:**
-- Channel IDs are usually negative numbers (e.g., `-1001234567890`)
-- Public channels can be specified by username (e.g., `@channelname`) or numeric ID
-- Private channels/groups must use numeric ID
-- The channel ID from config.yaml is used exactly as specified for folder naming (preserving `-` and `@` symbols)
-- In `config.yaml`, list channel IDs under the `channels:` section:
-  ```yaml
-  channels:
-    - -1001234567890  # Private channel ID → folder: ChannelName_-1001234567890/
-    - @publicchannel  # Public channel username → folder: ChannelName_@publicchannel/
-    - -1009876543210  # Another channel ID
-  ```
-
-### Per-Channel Folder Organization
-
-The application organizes downloads into separate folders for each channel/group, with independent tracking:
-
-**Folder naming:**
-- Format: `{SanitizedChannelTitle}_{channel_id_from_config}`
-- Channel ID is used exactly as specified in `config.yaml` (preserving `-` and `@`)
-- Examples:
-  - Config: `-1002006273817` → Folder: `MusicChannel_-1002006273817/`
-  - Config: `@publicmusic` → Folder: `PublicMusic_@publicmusic/`
-
-**Per-channel trackers:**
-Each folder contains its own trackers:
-- `message_tracker.json` - Tracks processed message IDs for this channel
-- `file_tracker.json` - Tracks downloaded files with hash-based duplicate detection
-
-**Benefits:**
-- ✅ Independent progress tracking per channel
-- ✅ Resume downloads for specific channels without affecting others
-- ✅ Easy to manage and organize downloaded content
-- ✅ Clear identification of content source
-
-**Download order:**
-- Files download in **chronological order** (oldest messages first)
-- Priority based on message ID, not file size
-- Predictable and consistent download sequence
-
-## Usage
-
-### Basic Usage
-
-- Run the main script from the project's root directory:
-    ```bash
-    python src/main.py
-    ```
-- To use a custom config file:
-    ```bash
-    python src/main.py --config path/to/your/custom_config.yaml
-    ```
-
-### Advanced Usage
-
-- **Single-threaded mode** (for slow connections or API limits):
-    ```bash
-    python src/main.py --workers 1
-    ```
-
-- **Maximum concurrency** (fastest downloads):
-    ```bash
-    python src/main.py --workers 5
-    ```
-
-- **With real-time progress monitoring**:
-    ```bash
-    python src/main.py --progress --workers 3
-    ```
-
-- **Limit number of files and show progress**:
-    ```bash
-    python src/main.py --max-files 50 --progress --workers 3
-    ```
-
-- **Show statistics only** (no downloads):
-    ```bash
-    python src/main.py --stats
-    ```
-
-- **Clean up tracker from missing files**:
-    ```bash
-    python src/main.py --cleanup
-    ```
-
-### Command Line Options
-
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--config` | `-c` | Custom config file path |
-| `--max-files` | `-m` | Maximum files to download (0 = unlimited) |
-| `--workers` | `-w` | Number of concurrent workers (1-5) |
-| `--progress` | `-p` | Show real-time download progress |
-| `--stats` | `-s` | Show statistics only |
-| `--cleanup` | | Clean up tracker from missing files |
-
-The application will automatically manage sessions, track downloads and messages, and log all activity. Statistics are available after each run.
-
-## Project Structure
-
-```
-telegram-music-downloader/
-├── .gitignore
-├── README.md
-├── requirements.txt
-├── src/
-│   ├── main.py               # Async main entry point with concurrent support
-│   ├── config.yaml           # Main configuration file (template/defaults)
-│   ├── local_config.yaml     # Local configuration with secrets (gitignored)
-│   ├── config_loader.py      # Loads and merges configurations
-│   ├── client.py             # Async Telegram client setup
-│   ├── downloader.py         # Async file downloading logic
-│   ├── download_queue.py     # Priority queue for concurrent downloads
-│   ├── download_worker.py    # Worker threads for concurrent processing
-│   ├── download_coordinator.py # Coordinates concurrent download process
-│   ├── download_monitor.py   # Real-time progress monitoring
-│   ├── logger.py             # Robust logging (rotation, health checks)
-│   ├── media_filter.py       # Flexible, configurable media filtering
-│   ├── message_parser.py     # Async parsing of channel messages for media
-│   ├── normalizer.py         # Track name normalization and cleanup
-│   ├── session_manager.py    # Manages and backs up Telegram sessions
-│   ├── channel_utils.py      # Channel folder utilities
-│   └── tracker.py            # Thread-safe tracking of files and messages (per-channel)
-└── data/                     # Default directory for downloads, logs, sessions
-    ├── downloads/
-    │   ├── ChannelName_-1001234567890/  # Per-channel folder
-    │   │   ├── message_tracker.json     # Channel-specific message tracker
-    │   │   ├── file_tracker.json        # Channel-specific file tracker
-    │   │   └── [downloaded files...]
-    │   └── AnotherChannel_@username/
-    │       ├── message_tracker.json
-    │       ├── file_tracker.json
-    │       └── [downloaded files...]
-    ├── logs/
-    └── sessions/
-```
-
-## Performance & Tips
-
-### 🚀 Concurrent Download Performance
-
-Real-world performance improvements with concurrent downloads:
-
-| Workers | Speed Improvement | Best For |
-|---------|------------------|----------|
-| 1 | Baseline | Slow connections, API limits |
-| 2 | ~2x faster | Balanced performance |
-| 3 | ~3x faster | **Recommended default** |
-| 4 | ~4x faster | Fast connections |
-| 5 | ~5x faster | Maximum speed, stable connections |
-
-### 💡 Optimization Tips
-
-- **Start with 3 workers**: Good balance between speed and stability
-- **Use `--progress`**: Monitor download progress and worker efficiency
-- **Single-threaded mode**: Use `--workers 1` if experiencing API limits or connection issues
-- **Rate limiting**: Automatically prevents Telegram API blocking
-- **Large files**: Higher worker counts show more improvement with larger files (>50MB)
-
-### 🔧 Troubleshooting
-
-- **API limits**: Reduce workers or increase `rate_limit.requests_per_second`
-- **Connection issues**: Use `--workers 1` for unstable connections
-- **Memory usage**: Reduce `max_queue_size` if experiencing memory issues
-- **Progress monitoring**: Use `--progress` to identify bottlenecks
+The actual filter behavior comes from `src/config.yaml` and
+`src/local_config.yaml`.
 
 ## Requirements
 
 - Python 3.9+
-- [Telethon](https://github.com/LonamiWebs/Telethon) and other dependencies in `requirements.txt`
+- Telegram API credentials from <https://my.telegram.org>
+- Access to the target channels/groups
+
+## Installation
+
+```bash
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+On macOS/Linux use:
+
+```bash
+source venv/bin/activate
+```
+
+## Configuration
+
+Main config file:
+
+- `src/config.yaml`
+
+Optional local override for secrets and machine-specific settings:
+
+- `src/local_config.yaml`
+
+`src/local_config.yaml` overrides values from `src/config.yaml` when present.
+
+### Minimal local config
+
+```yaml
+telegram:
+  api_id: 1234567
+  api_hash: "your_api_hash_here"
+```
+
+### Important Telegram settings
+
+The current code reads these Telegram settings:
+
+- `api_id`
+- `api_hash`
+- `session_name`
+- `two_factor_auth`
+
+Note: the app does not read `phone_number` from config. If no valid Telegram
+session exists, `src/client.py` asks for the phone number, login code, and
+optionally the 2FA password interactively.
+
+### Example channel config
+
+```yaml
+channels:
+  - -1001234567890
+  - "@musicchannel"
+  - -1009876543210
+```
+
+### Example download config
+
+```yaml
+download:
+  output_dir: "./data/downloads"
+  timeout_between_messages: 0.3
+  max_files_per_run: 100
+  concurrent_downloads: 3
+  max_queue_size: 100
+  worker_timeout: 300
+  rate_limit:
+    requests_per_second: 2
+    burst_size: 5
+```
+
+### Example filters
+
+```yaml
+filters:
+  file_types: ["audio", "document"]
+  formats: [".flac", ".wav", ".aiff", ".m4a", ".mp3"]
+  size:
+    min_mb: 1
+    max_mb: 500
+  date:
+    from: "2025-01-01"
+    to: null
+```
+
+### Track name normalization
+
+To enable optional filename cleanup after download:
+
+```yaml
+normalize_track_names: true
+```
+
+When enabled, the app applies normalization rules from `src/normalizer.py`
+after a successful download.
+
+## How to Get a Channel or Group ID
+
+1. Forward a message from the target channel to `@ShowJsonBot`
+2. Find a value like `"chat":{"id":-1001234567890}` in the response
+3. Use that numeric id in `channels:`
+
+Notes:
+
+- Private channels/groups usually need numeric IDs
+- Public channels can be configured by username such as `@channelname`
+- The configured identifier is used as-is in the final channel folder name
+
+## Usage
+
+Run from the repository root:
+
+```bash
+python src/main.py
+```
+
+### Common commands
+
+```bash
+python src/main.py --config src/config.yaml
+python src/main.py --workers 1
+python src/main.py --workers 5
+python src/main.py --max-files 20
+python src/main.py --stats
+python src/main.py --cleanup
+python src/main.py --progress
+```
+
+### Command line options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--config` | `-c` | Config file path |
+| `--max-files` | `-m` | Maximum files to download in this run |
+| `--workers` | `-w` | Override configured worker count |
+| `--progress` | `-p` | Show current progress once |
+| `--stats` | `-s` | Show stats for trackers initialized in current run |
+| `--cleanup` | | Remove missing-file entries from trackers initialized in current run |
+
+## Important Behavior Notes
+
+These notes reflect the current code, even where older docs may imply broader
+behavior.
+
+- `--progress` is a separate display path, not a full download mode by itself
+- In the current implementation, `python src/main.py --progress` initializes the
+  client and prints progress once; it does not start a download session
+- `--stats` and `--cleanup` do not scan all existing channel folders on disk;
+  they operate on trackers initialized in the current process
+- Message processing and file download tracking are separate; be careful when
+  changing tracker semantics
+- The current concurrency model is `asyncio` tasks and queues, not OS threads
+
+## How Downloads Are Organized
+
+Each configured channel gets its own root folder under the configured download
+directory.
+
+Folder naming:
+
+- Format: `{SanitizedChannelTitle}_{channel_identifier_from_config}`
+- The title part is sanitized
+- The configured channel id/username part is preserved as-is
+
+Examples:
+
+- `MusicChannel_-1002006273817`
+- `PublicMusic_@publicmusic`
+
+Inside each channel folder, the app stores trackers and downloaded files:
+
+```text
+data/
+  downloads/
+    MusicChannel_-1001234567890/
+      message_tracker.json
+      file_tracker.json
+      downloads/
+        song1.flac
+        song2.mp3
+```
+
+## Project Structure
+
+```text
+telegram-music-downloader/
+  README.md
+  requirements.txt
+  AGENTS.md
+  src/
+    main.py
+    config.yaml
+    local_config.yaml
+    config_loader.py
+    client.py
+    session_manager.py
+    message_parser.py
+    media_filter.py
+    downloader.py
+    download_queue.py
+    download_worker.py
+    download_coordinator.py
+    download_monitor.py
+    tracker.py
+    channel_utils.py
+    normalizer.py
+    logger.py
+  data/
+    downloads/
+    logs/
+    sessions/
+```
+
+## Development Notes
+
+- There is no formal build system
+- There is no configured linter in the repository
+- There is no committed automated test suite at the moment
+- There is no CI/CD workflow checked into `.github/`
+- A safe code validation step is:
+
+```bash
+python -m compileall src
+```
+
+## Troubleshooting
+
+- If Telegram asks for login, complete the interactive prompts in the terminal
+- If you hit API limits, reduce `--workers` or lower the configured request rate
+- If your connection is unstable, try `python src/main.py --workers 1`
+- Check `data/logs/downloader.log` for operational details
+
+## Security Notes
+
+- Do not commit `src/local_config.yaml` with real credentials
+- Do not commit `*.session` files
+- Do not commit `data/logs/` or downloaded media unless intended
 
 ## License
 
