@@ -8,20 +8,20 @@ downloads.
 
 ## Key Files
 - `src/main.py` - CLI entry point only
-- `src/session_runner.py` - application/session orchestration
-- `src/config_loader.py` - config loading and validation
-- `src/client.py` - Telegram auth/client setup
-- `src/session_manager.py` - session file helpers
-- `src/channel_processor.py` - per-channel orchestration and queueing
-- `src/message_parser.py` / `src/media_filter.py` - parsing and filtering
-- `src/downloader.py` / `src/download_*` - download pipeline
-- `src/domain_models.py` - shared typed domain/state models
-- `src/download_monitor.py` - progress display
-- `src/channel_utils.py` - per-channel folder naming and paths
-- `src/normalizer.py` - optional track-name normalization
-- `src/tracker.py` / `src/state_store.py` - persistent JSON state stores
+- `src/app.py` - application/session orchestration and session helpers
+- `src/config.py` - config loading, validation, and path getters
+- `src/telegram.py` - Telegram auth/client setup, message parsing, locator reconstruction
+- `src/channels.py` - per-channel orchestration, filtering, and channel path helpers
+- `src/download.py` - download pipeline and optional track-name normalization
+- `src/renamer.py` - track-name normalization helpers used before final save name is kept on disk
+- `src/runtime.py` - queue, workers, coordinator, and progress display
+- `src/models.py` - shared typed domain/state models
+- `src/state.py` - persistent JSON state stores and tracker management
 - `src/logger.py` - centralized session logger and CLI transcript helpers
-- `tests/` - synthetic tests and current local download target during development
+- `tests/test_app.py` - app/session orchestration tests
+- `tests/test_runtime.py` - runtime/download/channel tests
+- `tests/test_state.py` - tracker/state persistence tests
+- `tests/test_logging.py` - logging contract tests
 - `telegram.session` - Telethon session file stored at project root
 
 ## Cursor / Copilot Rules
@@ -35,10 +35,10 @@ the more specific rule.
 
 ## Source of Truth
 When docs and code disagree, prefer the actual implementation in:
-- `src/session_runner.py`
-- `src/config_loader.py`
-- `src/tracker.py`
-- `src/channel_utils.py`
+- `src/app.py`
+- `src/config.py`
+- `src/state.py`
+- `src/channels.py`
 
 `README.md` is useful and should generally match the current implementation.
 
@@ -76,7 +76,7 @@ python src/main.py --progress
 
 ### Build-like validation
 ```bash
-python -m compileall src
+python -m compileall src tests
 ```
 
 ### Linting
@@ -98,11 +98,9 @@ Use the standard library test runner:
 python -m unittest discover -s tests
 python -m unittest tests.test_logging
 python -m unittest tests.test_logging.LoggingIntegrationTests
-python -m unittest tests.test_phase1_refactor
-python -m unittest tests.test_phase1_refactor.DownloadCoordinatorTests
-python -m unittest tests.test_session_runner
-python -m unittest tests.test_state_store
-python -m unittest tests.test_downloader_contracts
+python -m unittest tests.test_app
+python -m unittest tests.test_runtime
+python -m unittest tests.test_state
 ```
 
 ## Import Model and Layout
@@ -111,9 +109,9 @@ imports. Keep following that pattern unless the whole project is deliberately
 refactored into a package.
 
 Examples from the codebase:
-- `from config_loader import ConfigLoader`
-- `from tracker import TrackerManager`
-- `import normalizer`
+- `from config import ConfigLoader`
+- `from state import TrackerManager`
+- `from runtime import DownloadCoordinator`
 
 - Keep new runtime modules in `src/`.
 - Do not introduce isolated `from src...` imports.
@@ -138,7 +136,7 @@ Rules:
 - Do not rely on `telegram.session` being configurable; it is fixed intentionally.
 
 ## Current Behavior Notes
-- `src/client.py` uses interactive login when no valid Telegram session exists.
+- `src/telegram.py` uses interactive login when no valid Telegram session exists.
 - The Telethon session file is always `telegram.session` in the repository root.
 - `--progress` in `src/main.py` is a separate display path, not a full download
   session mode by itself; standalone `--progress` only reports live in-process
@@ -159,9 +157,9 @@ Rules:
   the shared project logger instead of configuring per-module handlers.
 - `console.log` is intended to be a readable transcript of the session: startup,
   queueing, worker events, download outcomes, summaries, and top-level errors.
-- Live redraw progress from `src/download_monitor.py` is intentionally screen-only
+- Live redraw progress from `src/runtime.py` is intentionally screen-only
   and should not spam `console.log` on every refresh tick.
-- `src/telegram_locator.py` currently reconstructs a downloadable Telegram
+- `src/telegram.py` currently reconstructs a downloadable Telegram
   `Document` from stored locator fields; this works for current clean usage but
   is still a technical-debt boundary.
 
@@ -171,9 +169,9 @@ setup but are the main known follow-ups.
 
 - Run a deliberate manual `resume / repeated run / cleanup / re-download missing files`
   verification cycle on real data and keep notes about expected behavior.
-- Revisit `src/telegram_locator.py` and `src/downloader.py` if a more robust
+- Revisit `src/telegram.py` and `src/download.py` if a more robust
   Telegram message/document retrieval path is needed later.
-- Review `src/normalizer.py` behavior and naming output separately; track-name
+- Review the normalization helpers in `src/renamer.py` separately; track-name
   normalization was intentionally deferred from the main refactor phases.
 
 ## Code Style Guidelines
@@ -242,27 +240,27 @@ message text. Do not use Unicode symbols (`✓`, `✗`, `→`) — use ASCII mar
 
 | Marker | Meaning | Modules |
 |---|---|---|
-| `[OK]` | Successful download | `downloader.py` |
-| `[SKIP]` | File skipped | `downloader.py` |
+| `[OK]` | Successful download | `download.py` |
+| `[SKIP]` | File skipped | `download.py` |
 | `[FAIL]` | Error or failure of any kind | all modules |
-| `[DOWN]` | Download started | `download_worker.py` |
-| `[FILTER]` | File rejected by filter | `media_filter.py` |
-| `[QUEUE]` | File added to download queue | `channel_processor.py` |
-| `[NORM]` | Track name normalized | `downloader.py` |
-| `[TRACK]` | File registered in tracker (DEBUG only) | `tracker.py` |
-| `[BLACKLIST]` | Blacklist add/remove | `tracker.py` |
-| `[CHANNEL]` | Channel processing events | `channel_processor.py`, `message_parser.py` |
-| `[AUTH]` | Telegram auth/connect events | `client.py` |
+| `[DOWN]` | Download started | `runtime.py` |
+| `[FILTER]` | File rejected by filter | `channels.py` |
+| `[QUEUE]` | File added to download queue | `channels.py` |
+| `[NORM]` | Track name normalized | `download.py`, `renamer.py` |
+| `[TRACK]` | File registered in tracker (DEBUG only) | `state.py` |
+| `[BLACKLIST]` | Blacklist add/remove | `state.py` |
+| `[CHANNEL]` | Channel processing events | `channels.py`, `telegram.py` |
+| `[AUTH]` | Telegram auth/connect events | `telegram.py` |
 | `[INIT]` | Initialization events | `coordinator`, `worker pool`, `tracker` |
 | `[STOP]` | Shutdown events | `coordinator`, `worker pool` |
-| `[WAIT]` | Waiting for queue completion | `download_coordinator.py` |
-| `[SESSION]` | Session-level progress | `session_runner.py` |
-| `[CLEANUP]` | Tracker cleanup | `session_runner.py`, `tracker.py` |
-| `[STATS]` | Statistics display | `session_runner.py` |
+| `[WAIT]` | Waiting for queue completion | `runtime.py` |
+| `[SESSION]` | Session-level progress | `app.py` |
+| `[CLEANUP]` | Tracker cleanup | `app.py`, `state.py` |
+| `[STATS]` | Statistics display | `app.py` |
 | `[RESULTS]` | Session results block | `main.py` |
-| `[SUMMARY]` | Download summary block | `download_monitor.py` |
-| `[WARN]` | Non-fatal warning context | `tracker.py`, `media_filter.py`, `state_store.py` |
-| `[worker_N]` | Per-worker prefix | `download_worker.py` |
+| `[SUMMARY]` | Download summary block | `runtime.py` |
+| `[WARN]` | Non-fatal warning context | `state.py`, `channels.py` |
+| `[worker_N]` | Per-worker prefix | `runtime.py` |
 
 Worker events always include the worker identifier:
 ```
@@ -293,16 +291,18 @@ Use separator strings like `"-" * 40` or `"=" * 50` as content lines, not empty 
 
 ## Recommended Post-Change Checks
 ```bash
-python -m compileall src
+python -m compileall src tests
+python -m unittest tests.test_app
 python -m unittest tests.test_logging
-python -m unittest tests.test_phase1_refactor
+python -m unittest tests.test_runtime
+python -m unittest tests.test_state
 python -m unittest discover -s tests
 ```
 
 If runtime behavior changed and safe credentials already exist, a focused smoke
 check such as `python src/main.py --stats` is appropriate.
 
-`src/client.py` uses interactive Telegram login when no valid session exists, so
+`src/telegram.py` uses interactive Telegram login when no valid session exists, so
 avoid running live auth/download flows unless the task requires it.
 
 Do not run live Telegram download flows unless the task requires it.

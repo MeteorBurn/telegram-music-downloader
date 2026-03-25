@@ -109,11 +109,11 @@ naming:
   template: "{original_name}__{message_id}"  # output filename template
   date_format: "%Y%m%d_%H%M%S"              # date format used inside the template
 
-normalize_track_names: false  # true = run normalizer on filenames after download
+normalize_track_names: false  # true = run renamer cleanup on filenames after download
 
 filters:
   file_types: ["audio", "document"]                       # accepted Telegram media types
-  formats: [".flac", ".wav", ".aiff", ".m4a", ".mp3"]    # accepted file extensions
+  formats: [".flac", ".wav", ".aiff", ".aif", ".m4a", ".dsf", ".ape", ".wv", ".mp3"]    # accepted file extensions
   size:
     min_mb: 1     # skip files smaller than this (MB)
     max_mb: 500   # skip files larger than this (MB)
@@ -376,15 +376,12 @@ python -m unittest discover -s tests
 ### ▶️ Run a Specific Module
 
 ```powershell
+python -m unittest tests.test_app
+python -m unittest tests.test_runtime
+python -m unittest tests.test_state
 python -m unittest tests.test_logging
 python -m unittest tests.test_logging.LoggingIntegrationTests
 python -m unittest tests.test_logging.LoggingMessageCoverageTests
-python -m unittest tests.test_phase1_refactor
-python -m unittest tests.test_phase1_refactor.DownloadCoordinatorTests
-python -m unittest tests.test_session_runner
-python -m unittest tests.test_state_store
-python -m unittest tests.test_downloader_contracts
-python -m unittest tests.test_channel_processor
 ```
 
 ### ▶️ Verbose Output
@@ -403,19 +400,17 @@ python -m unittest tests.test_logging.LoggingIntegrationTests.test_async_concurr
 ### ▶️ Compile Check
 
 ```powershell
-python -m compileall src
+python -m compileall src tests
 ```
 
 ### 📊 Test Coverage
 
 | Test module | What it covers |
 |---|---|
-| `test_logging.py` | Logger setup, idempotent handler init, session transcript mirroring, live progress not in file, async concurrent writes without message loss, all `[TAG]` marker paths across every module |
-| `test_phase1_refactor.py` | Download coordinator lifecycle, worker pool start/stop, queue operations |
-| `test_session_runner.py` | `--stats`, `--cleanup`, config loading, session orchestration |
-| `test_state_store.py` | JSON state persistence, atomic writes, schema versioning, corrupt file recovery |
-| `test_downloader_contracts.py` | Downloader skip / success / fail outcomes, tracker integration |
-| `test_channel_processor.py` | Per-channel message scanning, filter decisions, queue handoff |
+| `test_app.py` | App/session orchestration, config-driven commands, `--stats`, `--cleanup`, `--progress` behavior |
+| `test_runtime.py` | Channel processing, Telegram locator, queue/retry behavior, worker/coordinator/runtime flow |
+| `test_state.py` | JSON state persistence, tracker semantics, schema versioning, corrupt file recovery |
+| `test_logging.py` | Logger setup, transcript mirroring, live progress not in file, async concurrent writes, `[TAG]` marker coverage across the consolidated modules |
 
 ---
 
@@ -461,36 +456,23 @@ telegram-music-downloader/
 ├── telegram.session                   ← created on first Telegram login (not in git)
 ├── src/
 │   ├── main.py                        ← CLI entry point and argument parser
-│   ├── session_runner.py              ← session orchestration and top-level commands
+│   ├── app.py                         ← session orchestration and top-level commands
+│   ├── config.py                      ← config loading, deep-merge, validation
+│   ├── telegram.py                    ← Telegram auth, entity parsing, locator reconstruction
+│   ├── channels.py                    ← filtering, channel paths, per-channel scan/queue orchestration
+│   ├── download.py                    ← file download, naming, tracker integration
+│   ├── renamer.py                     ← optional track name normalization helpers
+│   ├── runtime.py                     ← queue, workers, coordinator, progress, summaries
+│   ├── models.py                      ← shared typed domain and state models
+│   ├── state.py                       ← versioned atomic JSON state store and trackers
+│   ├── logger.py                      ← centralized logger, handlers, transcript helpers
 │   ├── config.yaml                    ← main config (committed, no secrets)
-│   ├── local_config.yaml              ← local overrides and secrets (not committed)
-│   ├── config_loader.py               ← config loading, deep-merge, validation
-│   ├── client.py                      ← Telegram auth and client lifecycle
-│   ├── session_manager.py             ← telegram.session file helpers
-│   ├── message_parser.py              ← message traversal and media field extraction
-│   ├── media_filter.py                ← filtering by type, format, size, date
-│   ├── domain_models.py               ← shared typed domain and state models
-│   ├── channel_models.py              ← channel-level context and result models
-│   ├── download_models.py             ← download request and outcome models
-│   ├── downloader.py                  ← file download, naming, tracker integration
-│   ├── telegram_locator.py            ← Telegram document reconstruction adapter
-│   ├── download_queue.py              ← async priority queue and rate limiter
-│   ├── download_worker.py             ← asyncio worker tasks and worker pool
-│   ├── download_coordinator.py        ← ties pool, queue, and session stats together
-│   ├── download_monitor.py            ← live progress display and session summary
-│   ├── channel_processor.py           ← per-channel scan, filter, queue orchestration
-│   ├── tracker.py                     ← scan and file trackers with persistent state
-│   ├── state_store.py                 ← versioned atomic JSON state store
-│   ├── channel_utils.py               ← channel folder naming and path helpers
-│   ├── normalizer.py                  ← optional track name normalization
-│   └── logger.py                      ← centralized logger, handlers, transcript helpers
+│   └── local_config.yaml              ← local overrides and secrets (not committed)
 └── tests/
-    ├── test_logging.py                ← logging pipeline and all [TAG] marker tests
-    ├── test_phase1_refactor.py        ← coordinator, worker pool, queue tests
-    ├── test_session_runner.py         ← session command tests
-    ├── test_state_store.py            ← state persistence tests
-    ├── test_downloader_contracts.py   ← downloader outcome tests
-    └── test_channel_processor.py     ← channel processing tests
+    ├── test_app.py                    ← app/session command tests
+    ├── test_runtime.py                ← runtime, download, queue, and channel tests
+    ├── test_state.py                  ← state persistence and tracker tests
+    └── test_logging.py                ← logging pipeline and all [TAG] marker tests
 ```
 
 ---
