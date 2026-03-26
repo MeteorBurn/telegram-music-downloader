@@ -531,7 +531,7 @@ class LoggingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         log_content = self.read_console_log()
         self.assertIn("[OK] Downloaded: song__10.wav [02:00] [2.0 MB]", log_content)
         self.assertIn(
-            "Skipped: File already downloaded:",
+            "[SKIP] Skipped: File already downloaded:",
             log_content,
         )
         self.assertIn("Missing Telegram locator fields for message 11", log_content)
