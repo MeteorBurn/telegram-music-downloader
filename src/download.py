@@ -29,9 +29,12 @@ class TelegramDownloader:
         if file_tracker:
             should_skip, skip_reason = file_tracker.should_skip_file(request)
             if should_skip:
-                self.logger.info(
-                    f"Skipped: {request.filename} {file_info} - {skip_reason}"
-                )
+                if skip_reason.startswith("File already downloaded:"):
+                    self.logger.info(f"Skipped: {skip_reason}")
+                else:
+                    self.logger.info(
+                        f"Skipped: {request.filename} {file_info} - {skip_reason}"
+                    )
                 return DownloadOutcome(
                     status="skipped",
                     reason=skip_reason,

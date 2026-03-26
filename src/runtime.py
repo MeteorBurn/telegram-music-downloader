@@ -361,9 +361,6 @@ class DownloadWorker:
             elif outcome == "skipped":
                 self.stats["tasks_skipped"] += 1
                 self.queue.task_done(task, outcome="skipped", result=result.to_dict())
-                self.logger.info(
-                    f"[{self.log_worker_id}] Skipped: {task.request.filename}"
-                )
             else:
                 retry_success = await self.queue.retry_task(task)
                 if not retry_success:
