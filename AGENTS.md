@@ -245,6 +245,7 @@ message text. Do not use Unicode symbols (`✓`, `✗`, `→`) — use ASCII mar
 | Marker | Meaning | Modules |
 |---|---|---|
 | `[OK]` | Successful download | `download.py` |
+| `[SKIP]` | File skipped | `download.py` |
 | `[FAIL]` | Error or failure of any kind | all modules |
 | `[CRITICAL]` | Critical failure that aborts the active session | `runtime.py`, `channels.py` |
 | `[FILTER]` | File rejected by filter | `channels.py` |
@@ -269,8 +270,12 @@ Worker events always include the worker identifier:
 ```
 [WORKER_3] -> Downloading: track.wav [07:30] [70.0 MB]
 [WORKER_3] [OK] Completed: track.wav
-[WORKER_3] Skipped: track.wav
 [WORKER_3] [FAIL] Failed: track.wav
+```
+
+Skip outcomes are emitted by the downloader with the `[SKIP]` marker, for example:
+```
+[SKIP] Skipped: File already downloaded: C:\downloads\track.wav
 ```
 
 #### Log Levels

@@ -278,6 +278,7 @@ All events use structured `[TAG]` markers for easy grepping and parsing.
 | `[CHANNEL]` | Per-channel scan progress and results |
 | `[QUEUE]` | File added to the download queue |
 | `[OK]` | File downloaded successfully |
+| `[SKIP]` | File skipped — already downloaded, blacklisted, or name conflict |
 | `[FILTER]` | File rejected by type / format / size / date filter |
 | `[FAIL]` | Any error or failure |
 | `[CRITICAL]` | Stop-worthy runtime failure; active session is aborted |
@@ -312,7 +313,7 @@ All events use structured `[TAG]` markers for easy grepping and parsing.
 [WORKER_1] [OK] Completed: Black Loops - CDMX__10201.wav
 [WORKER_2] [OK] Completed: Miroloja - Revolution__10202.wav
 
-Skipped: OldTrack__10190.wav - File already downloaded: /data/downloads/...
+[SKIP] Skipped: File already downloaded: /data/downloads/OldTrack__10190.wav
 [FILTER] format: podcast_episode.mp4
 [NORM] 'Artist Name Song Title' -> 'Artist Name - Song Title'
 
