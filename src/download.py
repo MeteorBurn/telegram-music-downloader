@@ -104,11 +104,15 @@ class TelegramDownloader:
                     file_hash = await file_tracker.track_downloaded_file(
                         request, str(file_path)
                     )
+                    message_date = self._build_message_date_suffix(request.publish_date)
                     self.logger.info(
-                        f"[OK] Downloaded: {file_path.name} {file_info} (hash: {file_hash[:8]}...)"
+                        f"[OK] Downloaded: {file_path.name} {file_info}{message_date} (hash: {file_hash[:8]}...)"
                     )
                 else:
-                    self.logger.info(f"[OK] Downloaded: {file_path.name} {file_info}")
+                    message_date = self._build_message_date_suffix(request.publish_date)
+                    self.logger.info(
+                        f"[OK] Downloaded: {file_path.name} {file_info}{message_date}"
+                    )
 
                 return DownloadOutcome(
                     status="success",
@@ -247,6 +251,24 @@ class TelegramDownloader:
             file_path=str(existing_path),
             logged=True,
         ).to_dict()
+
+    def _build_message_date_suffix(self, publish_date: Any) -> str:
+        if not publish_date:
+            return ""
+
+        try:
+            if isinstance(publish_date, str):
+                parsed_date = datetime.fromisoformat(
+                    publish_date.replace("Z", "+00:00")
+                )
+            elif isinstance(publish_date, datetime):
+                parsed_date = publish_date
+            else:
+                return ""
+
+            return f" [{parsed_date.strftime('%Y-%m-%d')}]"
+        except Exception:
+            return ""
 
     async def _get_message_by_id(self, media_info: Any) -> Optional[Any]:
         try:

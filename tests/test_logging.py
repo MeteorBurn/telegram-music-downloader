@@ -494,6 +494,7 @@ class LoggingIntegrationTests(unittest.IsolatedAsyncioTestCase):
             "file_size": 2 * 1024 * 1024,
             "type": "audio",
             "mime_type": "audio/vnd.wave",
+            "publish_date": "2026-03-26T08:29:13+00:00",
             "document_id": 110,
             "access_hash": 111,
             "file_reference": b"ref-10",
@@ -529,7 +530,10 @@ class LoggingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(failed["status"], "failed")
 
         log_content = self.read_console_log()
-        self.assertIn("[OK] Downloaded: song__10.wav [02:00] [2.0 MB]", log_content)
+        self.assertIn(
+            "[OK] Downloaded: song__10.wav [02:00] [2.0 MB] [2026-03-26]",
+            log_content,
+        )
         self.assertIn(
             "[SKIP] Skipped: File already downloaded:",
             log_content,
