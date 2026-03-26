@@ -197,7 +197,7 @@ class TelegramDownloader:
                 }
             raise
 
-        self.logger.info(f"[NORM] '{original_name}' -> '{normalized_name}'")
+        self.logger.info(f"[RENAME] '{original_name}' -> '{normalized_name}'")
         return {"status": "success", "file_path": normalized_path}
 
     def _predict_final_path(self, file_path: Path) -> Path:

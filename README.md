@@ -282,7 +282,7 @@ All events use structured `[TAG]` markers for easy grepping and parsing.
 | `[FILTER]` | File rejected by type / format / size / date filter |
 | `[FAIL]` | Any error or failure |
 | `[CRITICAL]` | Stop-worthy runtime failure; active session is aborted |
-| `[NORM]` | Track name normalized — shows `original → normalized` |
+| `[RENAME]` | Track name normalized — shows `original → normalized` |
 | `[BLACKLIST]` | File added to or removed from the per-channel blacklist |
 | `[CLEANUP]` | Tracker cleanup of missing files |
 | `[STATS]` | Statistics display block |
@@ -315,7 +315,7 @@ All events use structured `[TAG]` markers for easy grepping and parsing.
 
 [SKIP] Skipped: File already downloaded: /data/downloads/OldTrack__10190.wav
 [FILTER] format: podcast_episode.mp4
-[NORM] 'Artist Name Song Title' -> 'Artist Name - Song Title'
+[RENAME] 'Artist Name Song Title' -> 'Artist Name - Song Title'
 
 --------------------------------------------------
 [SUMMARY] Download Session Complete

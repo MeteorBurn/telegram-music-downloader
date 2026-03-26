@@ -250,7 +250,7 @@ message text. Do not use Unicode symbols (`✓`, `✗`, `→`) — use ASCII mar
 | `[CRITICAL]` | Critical failure that aborts the active session | `runtime.py`, `channels.py` |
 | `[FILTER]` | File rejected by filter | `channels.py` |
 | `[QUEUE]` | File added to download queue | `channels.py` |
-| `[NORM]` | Track name normalized | `download.py`, `renamer.py` |
+| `[RENAME]` | Track name normalized | `download.py`, `renamer.py` |
 | `[TRACK]` | File registered in tracker (DEBUG only) | `state.py` |
 | `[BLACKLIST]` | Blacklist add/remove | `state.py` |
 | `[CHANNEL]` | Channel processing events | `channels.py`, `telegram.py` |
