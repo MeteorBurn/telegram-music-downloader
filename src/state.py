@@ -93,7 +93,7 @@ class DownloadStateStore(JsonStateStore[DownloadState]):
 
 
 class MessageTracker:
-    SAFE_CHECKPOINT_OUTCOMES = {"completed", "skipped"}
+    SAFE_CHECKPOINT_OUTCOMES = {"completed", "skipped", "failed"}
 
     def __init__(self, tracker_file: str, channel_id: str):
         self.tracker_file = Path(tracker_file)
@@ -130,7 +130,7 @@ class MessageTracker:
         self._message_outcomes[message_id] = None
 
     def mark_message_outcome(self, message_id: int, outcome: str) -> Optional[int]:
-        if outcome not in {"completed", "skipped", "failed"}:
+        if outcome not in {"completed", "skipped", "failed", "critical"}:
             raise ValueError(f"Unsupported message outcome: {outcome}")
 
         self.register_message(message_id)

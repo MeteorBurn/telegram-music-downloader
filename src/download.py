@@ -44,40 +44,25 @@ class TelegramDownloader:
             download_dir = Path(request.download_dir or self.download_dir)
             download_dir.mkdir(parents=True, exist_ok=True)
             file_path = download_dir / filename
+            predicted_final_path = self._predict_final_path(file_path)
 
-            if file_path.exists():
-                skip_reason = f"File with same name already exists: {file_path}"
-                self.logger.info(
-                    f"[SKIP] {request.filename} {file_info} - {skip_reason}"
+            if predicted_final_path != file_path and predicted_final_path.exists():
+                return await self._build_existing_file_skip_result(
+                    request,
+                    file_info,
+                    file_tracker,
+                    predicted_final_path,
+                    "Normalized file already exists",
                 )
 
-                if file_tracker:
-                    existing_file = file_tracker.get_downloaded_file_by_message(
-                        request.message_id
-                    )
-                    if not existing_file:
-                        self.logger.info(
-                            f"[TRACK] Adding existing file to tracker: {file_path.name}"
-                        )
-                        file_mtime = file_path.stat().st_mtime
-                        file_download_date = datetime.fromtimestamp(file_mtime)
-                        existing_request = DownloadRequest.from_payload(request)
-                        existing_request.extra_fields["download_date"] = (
-                            file_download_date
-                        )
-                        file_hash = await file_tracker.track_downloaded_file(
-                            existing_request, str(file_path)
-                        )
-                        self.logger.info(
-                            f"[TRACK] Registered existing file: {file_path.name} (hash: {file_hash[:8]}...)"
-                        )
-
-                return DownloadOutcome(
-                    status="skipped",
-                    reason=skip_reason,
-                    file_path=str(file_path),
-                    logged=True,
-                ).to_dict()
+            if file_path.exists():
+                return await self._build_existing_file_skip_result(
+                    request,
+                    file_info,
+                    file_tracker,
+                    file_path,
+                    "File with same name already exists",
+                )
 
             message = await self._get_message_by_id(request)
             if not message:
@@ -100,17 +85,17 @@ class TelegramDownloader:
                 file_hash = None
 
                 if self.config.get_normalize_track_names():
-                    original_name = Path(file_path.name).stem
-                    original_suffix = Path(file_path.name).suffix
-                    normalized_name = normalize_track_name(original_name)
-                    if normalized_name != original_name:
-                        normalized_file_name = normalized_name + original_suffix
-                        normalized_path = file_path.with_name(normalized_file_name)
-                        file_path.rename(normalized_path)
-                        self.logger.info(
-                            f"[NORM] '{original_name}' -> '{normalized_name}'"
-                        )
-                        file_path = normalized_path
+                    normalization_result = self._apply_normalized_filename(
+                        file_path, request, file_info
+                    )
+                    if normalization_result["status"] == "skipped":
+                        return DownloadOutcome(
+                            status="skipped",
+                            reason=normalization_result["reason"],
+                            file_path=normalization_result["file_path"],
+                            logged=True,
+                        ).to_dict()
+                    file_path = normalization_result["file_path"]
 
                 if file_tracker:
                     file_hash = await file_tracker.track_downloaded_file(
@@ -153,6 +138,106 @@ class TelegramDownloader:
                 file_path=None,
                 logged=True,
             ).to_dict()
+
+    def _apply_normalized_filename(
+        self, file_path: Path, request: DownloadRequest, file_info: str
+    ) -> Dict[str, Any]:
+        original_name = file_path.stem
+        original_suffix = file_path.suffix
+        normalized_name = normalize_track_name(original_name)
+
+        if normalized_name == original_name:
+            return {"status": "success", "file_path": file_path}
+
+        normalized_file_name = normalized_name + original_suffix
+        normalized_path = file_path.with_name(normalized_file_name)
+
+        if normalized_path.exists():
+            if file_path.exists():
+                file_path.unlink()
+            skip_reason = f"Normalized file already exists: {normalized_path}"
+            self.logger.info(f"[SKIP] {request.filename} {file_info} - {skip_reason}")
+            return {
+                "status": "skipped",
+                "reason": skip_reason,
+                "file_path": str(normalized_path),
+            }
+
+        try:
+            file_path.rename(normalized_path)
+        except FileExistsError:
+            if file_path.exists():
+                file_path.unlink()
+            skip_reason = f"Normalized file already exists: {normalized_path}"
+            self.logger.info(f"[SKIP] {request.filename} {file_info} - {skip_reason}")
+            return {
+                "status": "skipped",
+                "reason": skip_reason,
+                "file_path": str(normalized_path),
+            }
+        except OSError as exc:
+            if getattr(exc, "winerror", None) == 183:
+                if file_path.exists():
+                    file_path.unlink()
+                skip_reason = f"Normalized file already exists: {normalized_path}"
+                self.logger.info(
+                    f"[SKIP] {request.filename} {file_info} - {skip_reason}"
+                )
+                return {
+                    "status": "skipped",
+                    "reason": skip_reason,
+                    "file_path": str(normalized_path),
+                }
+            raise
+
+        self.logger.info(f"[NORM] '{original_name}' -> '{normalized_name}'")
+        return {"status": "success", "file_path": normalized_path}
+
+    def _predict_final_path(self, file_path: Path) -> Path:
+        if not self.config.get_normalize_track_names():
+            return file_path
+
+        normalized_name = normalize_track_name(file_path.stem)
+        if normalized_name == file_path.stem:
+            return file_path
+        return file_path.with_name(normalized_name + file_path.suffix)
+
+    async def _build_existing_file_skip_result(
+        self,
+        request: DownloadRequest,
+        file_info: str,
+        file_tracker,
+        existing_path: Path,
+        reason_prefix: str,
+    ) -> Dict[str, Any]:
+        skip_reason = f"{reason_prefix}: {existing_path}"
+        self.logger.info(f"[SKIP] {request.filename} {file_info} - {skip_reason}")
+
+        if file_tracker:
+            existing_file = file_tracker.get_downloaded_file_by_message(
+                request.message_id
+            )
+            if not existing_file:
+                self.logger.info(
+                    f"[TRACK] Adding existing file to tracker: {existing_path.name}"
+                )
+                file_mtime = existing_path.stat().st_mtime
+                file_download_date = datetime.fromtimestamp(file_mtime)
+                existing_request = DownloadRequest.from_payload(request)
+                existing_request.extra_fields["download_date"] = file_download_date
+                file_hash = await file_tracker.track_downloaded_file(
+                    existing_request, str(existing_path)
+                )
+                self.logger.info(
+                    f"[TRACK] Registered existing file: {existing_path.name} (hash: {file_hash[:8]}...)"
+                )
+
+        return DownloadOutcome(
+            status="skipped",
+            reason=skip_reason,
+            file_path=str(existing_path),
+            logged=True,
+        ).to_dict()
 
     async def _get_message_by_id(self, media_info: Any) -> Optional[Any]:
         try:

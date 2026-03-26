@@ -9,6 +9,8 @@ from typing import Iterable, Optional
 PROJECT_LOGGER_NAME = "telegram_music_downloader"
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+ANSI_RED = "\x1b[31m"
+ANSI_RESET = "\x1b[0m"
 
 
 class SafeConsoleHandler(logging.StreamHandler):
@@ -146,3 +148,7 @@ def _write_safe_line(message: str, stream=None) -> None:
     )
     target_stream.write(safe_message + "\n")
     target_stream.flush()
+
+
+def format_critical_message(message: str) -> str:
+    return f"{ANSI_RED}{message}{ANSI_RESET}"

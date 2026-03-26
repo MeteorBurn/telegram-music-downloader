@@ -835,7 +835,7 @@ class LoggingMessageCoverageTests(LoggingHarness):
             "Download queue is full, cannot add more tasks",
             "Error adding task to queue: put boom",
             "Error getting task from queue: get boom",
-            "Failed to requeue task for retry, marking as failed",
+            "Failed to requeue task for retry, marking as critical",
             "Rate limit acquired for worker worker-a",
             "Rate limit hit for worker worker-a",
         )
@@ -983,14 +983,14 @@ class LoggingMessageCoverageTests(LoggingHarness):
         await failing_monitor._monitor_loop()
 
         self.assert_logged(
-            "[worker_1] Started",
-            "[worker_1] [DOWN] Downloading: track_21.wav",
-            "[worker_1] [OK] Completed: track_21.wav",
-            "[worker_1] [FAIL] Failed: track_22.wav",
-            "[worker_1] Stopped",
-            "[worker_2] Stopping - current task will complete first",
-            "[worker_3] [FAIL] Download error: worker download boom",
-            "[worker_4] [FAIL] Crashed: queue boom",
+            "[WORKER_1] Started",
+            "[WORKER_1] [DOWN] Downloading: track_21.wav",
+            "[WORKER_1] [OK] Completed: track_21.wav",
+            "[WORKER_1] [FAIL] Failed: track_22.wav",
+            "[WORKER_1] Stopped",
+            "[WORKER_2] Stopping - current task will complete first",
+            "[WORKER_3] [FAIL] Download error: worker download boom",
+            "[WORKER_4] [FAIL] Crashed: queue boom",
             "[FAIL] Coordinator is not running, cannot add task",
             "Coordinator is not running",
             "[INIT] Download coordinator starting: 1 workers",
@@ -1059,9 +1059,10 @@ class LoggingMessageCoverageTests(LoggingHarness):
             download_coordinator=ChannelFakeCoordinator(rejected_ids={11}),
             logger=self.logger,
         )
-        await failed_queue_processor.process_channel(
-            "-100test", SimpleNamespace(title="Synthetic Channel")
-        )
+        with self.assertRaises(RuntimeError):
+            await failed_queue_processor.process_channel(
+                "-100test", SimpleNamespace(title="Synthetic Channel")
+            )
 
         failing_processor = ChannelProcessor(
             parser=ChannelFakeParser([], error=RuntimeError("channel boom")),
@@ -1086,6 +1087,7 @@ class LoggingMessageCoverageTests(LoggingHarness):
             "[CHANNEL] File limit reached (1) for -100test",
             "[CHANNEL] Done: -100test - 1 queued, 4 messages scanned",
             "[FAIL] Failed to queue: failed.wav",
+            "[CRITICAL] Failed to queue failed.wav",
             "[FAIL] Error processing channel -100test: channel boom",
         )
 

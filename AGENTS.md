@@ -145,6 +145,10 @@ Rules:
   `scan_state.json` and `download_state.json` files on disk.
 - Message processing and file download tracking are separate concerns; be careful
   when changing tracker semantics.
+- Message outcomes now distinguish `failed` from `critical`:
+  `failed` is checkpoint-safe, while `critical` blocks checkpoint advancement.
+- Any runtime `critical` condition is treated as stop-worthy: the active session
+  is aborted and a red-highlighted `[CRITICAL]` line is emitted to console/log.
 - The current persisted schema is versioned and intended for clean usage; backward
   compatibility with legacy `message_tracker.json` / `file_tracker.json` is not required.
 - Channel folder naming uses the config-specified channel identifier as-is in the
@@ -243,6 +247,7 @@ message text. Do not use Unicode symbols (`✓`, `✗`, `→`) — use ASCII mar
 | `[OK]` | Successful download | `download.py` |
 | `[SKIP]` | File skipped | `download.py` |
 | `[FAIL]` | Error or failure of any kind | all modules |
+| `[CRITICAL]` | Critical failure that aborts the active session | `runtime.py`, `channels.py` |
 | `[DOWN]` | Download started | `runtime.py` |
 | `[FILTER]` | File rejected by filter | `channels.py` |
 | `[QUEUE]` | File added to download queue | `channels.py` |
@@ -260,13 +265,13 @@ message text. Do not use Unicode symbols (`✓`, `✗`, `→`) — use ASCII mar
 | `[RESULTS]` | Session results block | `main.py` |
 | `[SUMMARY]` | Download summary block | `runtime.py` |
 | `[WARN]` | Non-fatal warning context | `state.py`, `channels.py` |
-| `[worker_N]` | Per-worker prefix | `runtime.py` |
+| `[WORKER_N]` | Per-worker prefix | `runtime.py` |
 
 Worker events always include the worker identifier:
 ```
-[worker_3] [DOWN] Downloading: track.wav [07:30] [70.0 MB]
-[worker_3] [OK] Completed: track.wav
-[worker_3] [FAIL] Failed: track.wav
+[WORKER_3] [DOWN] Downloading: track.wav [07:30] [70.0 MB]
+[WORKER_3] [OK] Completed: track.wav
+[WORKER_3] [FAIL] Failed: track.wav
 ```
 
 #### Log Levels
@@ -274,6 +279,7 @@ Worker events always include the worker identifier:
 - `DEBUG` — internal diagnostics: `[TRACK]` tracker records, rate limiter tokens, queue internals.
 - `WARNING` — recoverable issues: invalid date format, blacklist ops, missing-on-disk files, Telegram internal errors, shutdown timeouts.
 - `ERROR` — failures that affect correctness: download errors, failed queue ops, entity resolution failures, state load failures.
+- `CRITICAL` — stop-worthy runtime failures; session is aborted immediately.
 
 Do not log `Rate limit: ... req/sec`, `Queue size: ...`, or `coordinator started successfully`
 at `INFO` level — these belong at `DEBUG`.

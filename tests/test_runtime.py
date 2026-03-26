@@ -16,6 +16,7 @@ if str(SRC_DIR) not in sys.path:
 
 
 from channels import ChannelProcessor
+from download import TelegramDownloader
 from models import DownloadOutcome, DownloadRequest
 from runtime import DownloadCoordinator, DownloadQueue, DownloadTask, RateLimiter
 from state import MessageTracker, TrackerManager
@@ -122,6 +123,34 @@ class FakeConfig:
         return 1000
 
 
+class FakeDownloadConfig:
+    def __init__(self, download_dir: str, normalize_track_names: bool = True):
+        self.download_dir = download_dir
+        self.normalize_track_names = normalize_track_names
+
+    def get_download_dir(self) -> str:
+        return self.download_dir
+
+    def get_naming_template(self) -> str:
+        return "{original_name}__{message_id}"
+
+    def get_date_format(self) -> str:
+        return "%Y%m%d_%H%M%S"
+
+    def get_normalize_track_names(self) -> bool:
+        return self.normalize_track_names
+
+
+class FakeDownloadClient:
+    def __init__(self):
+        self.download_calls = 0
+
+    async def download_media(self, _document, file: str):
+        self.download_calls += 1
+        Path(file).write_bytes(b"downloaded-audio")
+        return file
+
+
 def build_media_info(message_id: int) -> dict:
     return {
         "message_id": message_id,
@@ -200,7 +229,7 @@ class ChannelProcessorTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(message_tracker.get_last_processed_id(), 4)
 
-    async def test_failed_queue_result_blocks_contiguous_checkpoint(self):
+    async def test_critical_queue_result_stops_channel_processing(self):
         messages = [
             {
                 "message_id": 10,
@@ -238,18 +267,15 @@ class ChannelProcessorTests(unittest.IsolatedAsyncioTestCase):
                 logger=logging.getLogger("channel_processor_test"),
             )
 
-            result = await processor.process_channel(
-                "-100test", SimpleNamespace(title="Synthetic Channel")
-            )
-
-            self.assertEqual(result["files_found"], 2)
-            self.assertEqual(result["files_queued"], 1)
+            with self.assertRaises(RuntimeError):
+                await processor.process_channel(
+                    "-100test", SimpleNamespace(title="Synthetic Channel")
+                )
 
             message_tracker = tracker_manager.message_trackers["-100test"]
             coordinator.queued_tasks[0][0].outcome_callback(
                 "completed", None, {"status": "success"}
             )
-
             self.assertEqual(message_tracker.get_last_processed_id(), 10)
 
     async def test_max_files_limit_stops_channel_scan_after_limit(self):
@@ -351,6 +377,43 @@ class DownloadRequestTests(unittest.TestCase):
         rebuilt_media_info = request.to_media_info()
         self.assertEqual(rebuilt_media_info["custom_field"], "kept")
         self.assertEqual(rebuilt_media_info["type"], "audio")
+
+
+class DownloaderNormalizationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_existing_normalized_name_skips_before_download(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = FakeDownloadConfig(temp_dir, normalize_track_names=True)
+            client = FakeDownloadClient()
+            downloader = TelegramDownloader(client, config)
+            downloader._get_message_by_id = lambda _payload: asyncio.sleep(
+                0, result=SimpleNamespace(media=SimpleNamespace(document=object()))
+            )
+
+            final_path = Path(temp_dir) / "Pancratio - Badass Music.flac"
+            final_path.write_bytes(b"existing-audio")
+
+            result = await downloader.download_media_file(
+                {
+                    "message_id": 123,
+                    "channel_id": "test-channel",
+                    "filename": "Pancratio - Badass Music.flac",
+                    "file_size": 1024,
+                    "type": "audio",
+                    "mime_type": "audio/flac",
+                    "document_id": 1,
+                    "access_hash": 2,
+                    "file_reference": b"ref",
+                }
+            )
+
+            temp_path = Path(temp_dir) / "Pancratio - Badass Music__123.flac"
+
+            self.assertEqual(result["status"], "skipped")
+            self.assertIn("Normalized file already exists", result["reason"])
+            self.assertEqual(result["file_path"], str(final_path))
+            self.assertTrue(final_path.exists())
+            self.assertFalse(temp_path.exists())
+            self.assertEqual(client.download_calls, 0)
 
 
 class DownloadQueueTests(unittest.IsolatedAsyncioTestCase):

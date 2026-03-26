@@ -3,11 +3,16 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional
 
-from logger import emit_session_lines, emit_session_message, get_logger
+from logger import (
+    emit_session_lines,
+    emit_session_message,
+    format_critical_message,
+    get_logger,
+)
 from models import DownloadOutcome, DownloadRequest
 
 
-TERMINAL_OUTCOMES = {"completed", "skipped", "failed"}
+TERMINAL_OUTCOMES = {"completed", "skipped", "failed", "critical"}
 
 
 @dataclass
@@ -38,12 +43,15 @@ class DownloadQueue:
         self._completed_tasks = set()
         self._skipped_tasks = set()
         self._failed_tasks = set()
+        self._critical_tasks = set()
+        self._critical_failure_reason: Optional[str] = None
         self.logger = get_logger()
         self._stats = {
             "total_added": 0,
             "total_completed": 0,
             "total_skipped": 0,
             "total_failed": 0,
+            "total_critical": 0,
             "total_retried": 0,
             "current_size": 0,
         }
@@ -113,10 +121,15 @@ class DownloadQueue:
             self._skipped_tasks.add(task_id)
             self._stats["total_skipped"] += 1
             self.logger.debug(f"Task {task_id} skipped")
-        else:
+        elif outcome == "failed":
             self._failed_tasks.add(task_id)
             self._stats["total_failed"] += 1
             self.logger.debug(f"Task {task_id} failed")
+        else:
+            self._critical_tasks.add(task_id)
+            self._stats["total_critical"] += 1
+            reason = (result or {}).get("reason", "Unknown critical task failure")
+            self._record_critical_failure(task_id, reason)
 
         self._notify_task_outcome(task, outcome, result)
         self._queue.task_done()
@@ -154,16 +167,17 @@ class DownloadQueue:
             )
             return True
 
-        self.logger.warning("Failed to requeue task for retry, marking as failed")
+        self.logger.warning("Failed to requeue task for retry, marking as critical")
         task_id = self._generate_task_id(task.media_info)
         if task_id in self._pending_tasks:
             del self._pending_tasks[task_id]
-        self._failed_tasks.add(task_id)
-        self._stats["total_failed"] += 1
+        self._critical_tasks.add(task_id)
+        self._stats["total_critical"] += 1
+        self._record_critical_failure(task_id, "Could not requeue task for retry")
         self._notify_task_outcome(
             task,
-            "failed",
-            {"status": "failed", "reason": "Could not requeue task for retry"},
+            "critical",
+            {"status": "critical", "reason": "Could not requeue task for retry"},
         )
         self._queue.task_done()
         self._stats["current_size"] = self._queue.qsize()
@@ -173,16 +187,24 @@ class DownloadQueue:
         return f"{media_info.get('channel_id', 'unknown')}_{media_info.get('message_id', 0)}"
 
     def get_stats(self) -> Dict[str, Any]:
+        total_failed = len(self._failed_tasks) + len(self._critical_tasks)
         return {
             **self._stats,
             "pending_tasks": len(self._pending_tasks),
             "completed_tasks": len(self._completed_tasks),
             "skipped_tasks": len(self._skipped_tasks),
-            "failed_tasks": len(self._failed_tasks),
+            "failed_tasks": total_failed,
+            "critical_tasks": len(self._critical_tasks),
             "queue_size": self._queue.qsize(),
             "is_empty": self._queue.empty(),
             "is_full": self._queue.full(),
         }
+
+    def has_critical_failure(self) -> bool:
+        return self._critical_failure_reason is not None
+
+    def get_critical_failure_reason(self) -> Optional[str]:
+        return self._critical_failure_reason
 
     async def wait_empty(self):
         await self._queue.join()
@@ -226,6 +248,12 @@ class DownloadQueue:
             task.outcome_callback(outcome, task, result)
         except Exception as exc:
             self.logger.error(f"Task outcome callback failed: {exc}")
+
+    def _record_critical_failure(self, task_id: str, reason: str) -> None:
+        message = f"[CRITICAL] Task {task_id}: {reason}"
+        if self._critical_failure_reason is None:
+            self._critical_failure_reason = message
+        self.logger.critical(format_critical_message(message))
 
 
 class RateLimiter:
@@ -286,26 +314,30 @@ class DownloadWorker:
             "last_activity": None,
         }
 
+    @property
+    def log_worker_id(self) -> str:
+        return self.worker_id.upper()
+
     async def start(self):
         self.is_running = True
         self.stats["start_time"] = datetime.now()
-        self.logger.info(f"[{self.worker_id}] Started")
+        self.logger.info(f"[{self.log_worker_id}] Started")
 
         try:
             while self.is_running:
                 await self._process_next_task()
         except asyncio.CancelledError:
-            self.logger.info(f"[{self.worker_id}] Cancelled")
+            self.logger.info(f"[{self.log_worker_id}] Cancelled")
         except Exception as exc:
-            self.logger.error(f"[{self.worker_id}] [FAIL] Crashed: {exc}")
+            self.logger.error(f"[{self.log_worker_id}] [FAIL] Crashed: {exc}")
         finally:
-            self.logger.info(f"[{self.worker_id}] Stopped")
+            self.logger.info(f"[{self.log_worker_id}] Stopped")
 
     async def stop(self):
         self.is_running = False
         if self.current_task:
             self.logger.info(
-                f"[{self.worker_id}] Stopping - current task will complete first"
+                f"[{self.log_worker_id}] Stopping - current task will complete first"
             )
 
     async def _process_next_task(self):
@@ -324,29 +356,31 @@ class DownloadWorker:
                 self.stats["tasks_completed"] += 1
                 self.queue.task_done(task, outcome="completed", result=result.to_dict())
                 self.logger.info(
-                    f"[{self.worker_id}] [OK] Completed: {task.request.filename}"
+                    f"[{self.log_worker_id}] [OK] Completed: {task.request.filename}"
                 )
             elif outcome == "skipped":
                 self.stats["tasks_skipped"] += 1
                 self.queue.task_done(task, outcome="skipped", result=result.to_dict())
                 self.logger.info(
-                    f"[{self.worker_id}] [SKIP] Skipped: {task.request.filename}"
+                    f"[{self.log_worker_id}] [SKIP] Skipped: {task.request.filename}"
                 )
             else:
                 retry_success = await self.queue.retry_task(task)
                 if not retry_success:
                     self.stats["tasks_failed"] += 1
                     self.logger.warning(
-                        f"[{self.worker_id}] [FAIL] Failed: {task.request.filename}"
+                        f"[{self.log_worker_id}] [FAIL] Failed: {task.request.filename}"
                     )
         except Exception as exc:
-            self.logger.error(f"[{self.worker_id}] [FAIL] Error processing task: {exc}")
+            self.logger.error(
+                f"[{self.log_worker_id}] [FAIL] Error processing task: {exc}"
+            )
             if self.current_task:
                 self.queue.task_done(
                     self.current_task,
-                    outcome="failed",
+                    outcome="critical",
                     result=DownloadOutcome(
-                        status="failed", reason=str(exc), file_path=None, logged=True
+                        status="critical", reason=str(exc), file_path=None, logged=True
                     ).to_dict(),
                 )
                 self.stats["tasks_failed"] += 1
@@ -356,7 +390,7 @@ class DownloadWorker:
     async def _download_file(self, task: DownloadTask) -> DownloadOutcome:
         try:
             self.logger.info(
-                f"[{self.worker_id}] [DOWN] Downloading: {task.request.filename} {task.file_info_str}"
+                f"[{self.log_worker_id}] [DOWN] Downloading: {task.request.filename} {task.file_info_str}"
             )
             result = await self.downloader.download_media_file(
                 task.request, task.file_info_str
@@ -366,7 +400,7 @@ class DownloadWorker:
                 self.stats["bytes_downloaded"] += task.request.file_size
             return outcome
         except Exception as exc:
-            self.logger.error(f"[{self.worker_id}] [FAIL] Download error: {exc}")
+            self.logger.error(f"[{self.log_worker_id}] [FAIL] Download error: {exc}")
             return DownloadOutcome(
                 status="failed", reason=str(exc), file_path=None, logged=True
             )
@@ -531,7 +565,7 @@ class DownloadCoordinator:
         self._update_session_stats()
         self.is_running = False
         await self.worker_pool.stop()
-        self.queue.clear(outcome="failed")
+        self.queue.clear(outcome="critical")
         self.logger.info("[STOP] Download coordinator stopped")
 
     async def add_download_task(self, media_info: Any, file_info_str: str = "") -> bool:
@@ -560,7 +594,19 @@ class DownloadCoordinator:
             return
 
         self.logger.info("[WAIT] Waiting for all downloads to complete...")
-        await self.worker_pool.wait_completion()
+        while self.is_running:
+            if self.queue.has_critical_failure():
+                reason = self.queue.get_critical_failure_reason() or "unknown reason"
+                critical_message = format_critical_message(
+                    f"[CRITICAL] Stopping session due to critical failure: {reason}"
+                )
+                self.logger.critical(critical_message)
+                raise RuntimeError(reason)
+            try:
+                await asyncio.wait_for(self.worker_pool.wait_completion(), timeout=0.25)
+                break
+            except asyncio.TimeoutError:
+                continue
         self.logger.info("[WAIT] All downloads completed")
         self._update_session_stats()
 

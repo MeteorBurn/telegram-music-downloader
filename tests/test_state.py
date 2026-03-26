@@ -134,7 +134,7 @@ class MessageTrackerTests(unittest.TestCase):
                 ],
             )
 
-    def test_failed_message_stays_replayable_after_restart(self):
+    def test_failed_message_advances_checkpoint_after_restart(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             tracker_path = Path(temp_dir) / "message_tracker.json"
             tracker = MessageTracker(str(tracker_path), "channel-1")
@@ -144,6 +144,24 @@ class MessageTrackerTests(unittest.TestCase):
             tracker.register_message(22)
             tracker.mark_message_outcome(20, "completed")
             tracker.mark_message_outcome(21, "failed")
+            tracker.mark_message_outcome(22, "skipped")
+
+            self.assertEqual(tracker.get_last_processed_id(), 22)
+
+            restarted_tracker = MessageTracker(str(tracker_path), "channel-1")
+            self.assertEqual(restarted_tracker.get_last_processed_id(), 22)
+            self.assertEqual(restarted_tracker.total_messages_processed, 3)
+
+    def test_critical_message_stays_replayable_after_restart(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tracker_path = Path(temp_dir) / "message_tracker.json"
+            tracker = MessageTracker(str(tracker_path), "channel-1")
+
+            tracker.register_message(20)
+            tracker.register_message(21)
+            tracker.register_message(22)
+            tracker.mark_message_outcome(20, "completed")
+            tracker.mark_message_outcome(21, "critical")
             tracker.mark_message_outcome(22, "skipped")
 
             self.assertEqual(tracker.get_last_processed_id(), 20)

@@ -16,7 +16,7 @@ download:
   max_files_per_run: 100  # Maximum files to download per run (0 = unlimited)
   
   # Многопоточное скачивание
-  concurrent_downloads: 3  # Количество одновременных скачиваний (1-5)
+  concurrent_downloads: 5  # Количество одновременных скачиваний (1-5)
   max_queue_size: 100     # Максимальный размер очереди
   worker_timeout: 300     # Таймаут воркера (секунды)
   
@@ -38,7 +38,7 @@ filters:
     min_mb: 1     # Minimum file size in MB
     max_mb: 500   # Maximum file size in MB
   date:
-    from: "2025-01-01"  # Download messages from this date (YYYY-MM-DD)
+    from: "2026-01-01"  # Download messages from this date (YYYY-MM-DD)
     to: null            # Until current date (null = no limit)
 
 logging:

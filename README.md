@@ -282,6 +282,7 @@ All events use structured `[TAG]` markers for easy grepping and parsing.
 | `[SKIP]` | File skipped — already downloaded, blacklisted, or name conflict |
 | `[FILTER]` | File rejected by type / format / size / date filter |
 | `[FAIL]` | Any error or failure |
+| `[CRITICAL]` | Stop-worthy runtime failure; active session is aborted |
 | `[NORM]` | Track name normalized — shows `original → normalized` |
 | `[BLACKLIST]` | File added to or removed from the per-channel blacklist |
 | `[CLEANUP]` | Tracker cleanup of missing files |
@@ -289,7 +290,7 @@ All events use structured `[TAG]` markers for easy grepping and parsing.
 | `[RESULTS]` | Session results summary |
 | `[SUMMARY]` | Download summary with totals and speed |
 | `[WARN]` | Non-fatal warning |
-| `[worker_N]` | Per-worker prefix on all worker-level events |
+| `[WORKER_N]` | Per-worker prefix on all worker-level events |
 
 ### Example Output
 
@@ -299,8 +300,8 @@ All events use structured `[TAG]` markers for easy grepping and parsing.
 ==================================================
 [AUTH] Successfully connected to Telegram
 [INIT] Download coordinator starting: 5 workers, queue 100, rate 2 req/sec
-[worker_1] Started
-[worker_2] Started
+[WORKER_1] Started
+[WORKER_2] Started
 ...
 [CHANNEL] Processing: -1001234567890 (Music Channel)
 [CHANNEL] Resume from message ID: 10200
@@ -308,10 +309,10 @@ All events use structured `[TAG]` markers for easy grepping and parsing.
 [QUEUE] Black Loops - CDMX__10201.wav [06:42] [78.4 MB]
 [QUEUE] Miroloja - Revolution__10202.wav [07:15] [85.1 MB]
 
-[worker_1] [DOWN] Downloading: Black Loops - CDMX__10201.wav [06:42] [78.4 MB]
-[worker_2] [DOWN] Downloading: Miroloja - Revolution__10202.wav [07:15] [85.1 MB]
-[worker_1] [OK] Completed: Black Loops - CDMX__10201.wav
-[worker_2] [OK] Completed: Miroloja - Revolution__10202.wav
+[WORKER_1] [DOWN] Downloading: Black Loops - CDMX__10201.wav [06:42] [78.4 MB]
+[WORKER_2] [DOWN] Downloading: Miroloja - Revolution__10202.wav [07:15] [85.1 MB]
+[WORKER_1] [OK] Completed: Black Loops - CDMX__10201.wav
+[WORKER_2] [OK] Completed: Miroloja - Revolution__10202.wav
 
 [SKIP] OldTrack__10190.wav - File already downloaded: /data/downloads/...
 [FILTER] format: podcast_episode.mp4
@@ -357,6 +358,8 @@ Files failed:        0
 - **`--stats`** run before a download session also prints current filter and directory config
 - **Concurrency** — implemented with `asyncio` tasks and queues, not OS threads
 - **State schema** — `scan_state.json` / `download_state.json` are versioned; legacy `message_tracker.json` / `file_tracker.json` are not used
+- **Outcome semantics** — `failed` does not block scan checkpoint advancement; `critical` does
+- **Critical stop behavior** — any `critical` condition aborts the active session and logs a red-highlighted `[CRITICAL]` line to console and `console.log`
 - **File cap** — `max_files_per_run` (config) and `--max-files` (CLI) both apply; the lower value wins
 - **Auto-blacklist** — files that fail with flood or timeout errors are blacklisted per channel automatically
 - **Local config** — `local_config.yaml` deep-merges over `config.yaml`; include only the keys you want to override
@@ -485,8 +488,8 @@ Real local session — `--config src/local_config.yaml --workers 5 --max-files 3
 |---|---|
 | `[QUEUE]` entries in `console.log` | **30** |
 | `[OK] Downloaded:` entries | **30** |
-| `[worker_N] Started` | **5** (one per worker) |
-| `[worker_N] Stopped` | **5** (all clean shutdowns) |
+| `[WORKER_N] Started` | **5** (one per worker) |
+| `[WORKER_N] Stopped` | **5** (all clean shutdowns) |
 | Dropped or missing messages | **0** |
 
 ---

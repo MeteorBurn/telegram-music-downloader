@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Union
 
-from logger import get_logger
+from logger import format_critical_message, get_logger
 from models import (
     ChannelContext,
     ChannelProcessingResult,
@@ -349,10 +349,15 @@ class ChannelProcessor:
                         f"[QUEUE] {queued_message.filename} {queued_message.file_info_str}"
                     )
                 else:
-                    context.message_tracker.mark_message_outcome(message_id, "failed")
+                    context.message_tracker.mark_message_outcome(message_id, "critical")
                     self.logger.warning(
                         f"[FAIL] Failed to queue: {queued_message.filename}"
                     )
+                    critical_reason = (
+                        f"[CRITICAL] Failed to queue {queued_message.filename}"
+                    )
+                    self.logger.critical(format_critical_message(critical_reason))
+                    raise RuntimeError(critical_reason)
 
                 if max_files > 0 and files_queued_in_channel >= max_files:
                     self.logger.info(
