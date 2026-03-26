@@ -531,7 +531,7 @@ class LoggingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         log_content = self.read_console_log()
         self.assertIn("[OK] Downloaded: song__10.wav [02:00] [2.0 MB]", log_content)
         self.assertIn(
-            "[SKIP] song.wav [02:00] [2.0 MB] - File already downloaded:",
+            "Skipped: song.wav [02:00] [2.0 MB] - File already downloaded:",
             log_content,
         )
         self.assertIn("Missing Telegram locator fields for message 11", log_content)
@@ -984,7 +984,7 @@ class LoggingMessageCoverageTests(LoggingHarness):
 
         self.assert_logged(
             "[WORKER_1] Started",
-            "[WORKER_1] [DOWN] Downloading: track_21.wav",
+            "[WORKER_1] -> Downloading: track_21.wav",
             "[WORKER_1] [OK] Completed: track_21.wav",
             "[WORKER_1] [FAIL] Failed: track_22.wav",
             "[WORKER_1] Stopped",

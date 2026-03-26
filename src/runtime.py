@@ -362,7 +362,7 @@ class DownloadWorker:
                 self.stats["tasks_skipped"] += 1
                 self.queue.task_done(task, outcome="skipped", result=result.to_dict())
                 self.logger.info(
-                    f"[{self.log_worker_id}] [SKIP] Skipped: {task.request.filename}"
+                    f"[{self.log_worker_id}] Skipped: {task.request.filename}"
                 )
             else:
                 retry_success = await self.queue.retry_task(task)
@@ -390,7 +390,7 @@ class DownloadWorker:
     async def _download_file(self, task: DownloadTask) -> DownloadOutcome:
         try:
             self.logger.info(
-                f"[{self.log_worker_id}] [DOWN] Downloading: {task.request.filename} {task.file_info_str}"
+                f"[{self.log_worker_id}] -> Downloading: {task.request.filename} {task.file_info_str}"
             )
             result = await self.downloader.download_media_file(
                 task.request, task.file_info_str

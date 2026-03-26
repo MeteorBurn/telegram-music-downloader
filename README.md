@@ -277,9 +277,7 @@ All events use structured `[TAG]` markers for easy grepping and parsing.
 | `[INIT]` | Component startup — trackers, workers, coordinator |
 | `[CHANNEL]` | Per-channel scan progress and results |
 | `[QUEUE]` | File added to the download queue |
-| `[DOWN]` | Worker started downloading a file |
 | `[OK]` | File downloaded successfully |
-| `[SKIP]` | File skipped — already downloaded, blacklisted, or name conflict |
 | `[FILTER]` | File rejected by type / format / size / date filter |
 | `[FAIL]` | Any error or failure |
 | `[CRITICAL]` | Stop-worthy runtime failure; active session is aborted |
@@ -309,12 +307,12 @@ All events use structured `[TAG]` markers for easy grepping and parsing.
 [QUEUE] Black Loops - CDMX__10201.wav [06:42] [78.4 MB]
 [QUEUE] Miroloja - Revolution__10202.wav [07:15] [85.1 MB]
 
-[WORKER_1] [DOWN] Downloading: Black Loops - CDMX__10201.wav [06:42] [78.4 MB]
-[WORKER_2] [DOWN] Downloading: Miroloja - Revolution__10202.wav [07:15] [85.1 MB]
+[WORKER_1] -> Downloading: Black Loops - CDMX__10201.wav [06:42] [78.4 MB]
+[WORKER_2] -> Downloading: Miroloja - Revolution__10202.wav [07:15] [85.1 MB]
 [WORKER_1] [OK] Completed: Black Loops - CDMX__10201.wav
 [WORKER_2] [OK] Completed: Miroloja - Revolution__10202.wav
 
-[SKIP] OldTrack__10190.wav - File already downloaded: /data/downloads/...
+Skipped: OldTrack__10190.wav - File already downloaded: /data/downloads/...
 [FILTER] format: podcast_episode.mp4
 [NORM] 'Artist Name Song Title' -> 'Artist Name - Song Title'
 

@@ -30,7 +30,7 @@ class TelegramDownloader:
             should_skip, skip_reason = file_tracker.should_skip_file(request)
             if should_skip:
                 self.logger.info(
-                    f"[SKIP] {request.filename} {file_info} - {skip_reason}"
+                    f"Skipped: {request.filename} {file_info} - {skip_reason}"
                 )
                 return DownloadOutcome(
                     status="skipped",
@@ -156,7 +156,7 @@ class TelegramDownloader:
             if file_path.exists():
                 file_path.unlink()
             skip_reason = f"Normalized file already exists: {normalized_path}"
-            self.logger.info(f"[SKIP] {request.filename} {file_info} - {skip_reason}")
+            self.logger.info(f"Skipped: {request.filename} {file_info} - {skip_reason}")
             return {
                 "status": "skipped",
                 "reason": skip_reason,
@@ -169,7 +169,7 @@ class TelegramDownloader:
             if file_path.exists():
                 file_path.unlink()
             skip_reason = f"Normalized file already exists: {normalized_path}"
-            self.logger.info(f"[SKIP] {request.filename} {file_info} - {skip_reason}")
+            self.logger.info(f"Skipped: {request.filename} {file_info} - {skip_reason}")
             return {
                 "status": "skipped",
                 "reason": skip_reason,
@@ -181,7 +181,7 @@ class TelegramDownloader:
                     file_path.unlink()
                 skip_reason = f"Normalized file already exists: {normalized_path}"
                 self.logger.info(
-                    f"[SKIP] {request.filename} {file_info} - {skip_reason}"
+                    f"Skipped: {request.filename} {file_info} - {skip_reason}"
                 )
                 return {
                     "status": "skipped",
@@ -211,7 +211,7 @@ class TelegramDownloader:
         reason_prefix: str,
     ) -> Dict[str, Any]:
         skip_reason = f"{reason_prefix}: {existing_path}"
-        self.logger.info(f"[SKIP] {request.filename} {file_info} - {skip_reason}")
+        self.logger.info(f"Skipped: {request.filename} {file_info} - {skip_reason}")
 
         if file_tracker:
             existing_file = file_tracker.get_downloaded_file_by_message(

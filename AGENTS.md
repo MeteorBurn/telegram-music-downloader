@@ -245,10 +245,8 @@ message text. Do not use Unicode symbols (`✓`, `✗`, `→`) — use ASCII mar
 | Marker | Meaning | Modules |
 |---|---|---|
 | `[OK]` | Successful download | `download.py` |
-| `[SKIP]` | File skipped | `download.py` |
 | `[FAIL]` | Error or failure of any kind | all modules |
 | `[CRITICAL]` | Critical failure that aborts the active session | `runtime.py`, `channels.py` |
-| `[DOWN]` | Download started | `runtime.py` |
 | `[FILTER]` | File rejected by filter | `channels.py` |
 | `[QUEUE]` | File added to download queue | `channels.py` |
 | `[NORM]` | Track name normalized | `download.py`, `renamer.py` |
@@ -269,8 +267,9 @@ message text. Do not use Unicode symbols (`✓`, `✗`, `→`) — use ASCII mar
 
 Worker events always include the worker identifier:
 ```
-[WORKER_3] [DOWN] Downloading: track.wav [07:30] [70.0 MB]
+[WORKER_3] -> Downloading: track.wav [07:30] [70.0 MB]
 [WORKER_3] [OK] Completed: track.wav
+[WORKER_3] Skipped: track.wav
 [WORKER_3] [FAIL] Failed: track.wav
 ```
 
