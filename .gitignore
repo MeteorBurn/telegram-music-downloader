@@ -30,3 +30,5 @@ test_concurrent.py
 
 # Telegram sessions
 *.session
+*.session-journal
+
