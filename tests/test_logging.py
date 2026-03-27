@@ -470,7 +470,7 @@ class LoggingIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("[BLACKLIST] Message 7 removed from blacklist", log_content)
         self.assertIn("Failed to load state from", log_content)
         self.assertIn("[WARN] Starting with empty state", log_content)
-        self.assertIn("[FILTER] format: bad.mp3", log_content)
+        self.assertIn("[FILTER] format: [.mp3] bad.mp3", log_content)
         self.assertIn("Missing Telegram locator fields for message 9", log_content)
 
     async def test_downloader_logs_success_skip_and_failure_paths(self):
@@ -636,9 +636,9 @@ class LoggingMessageCoverageTests(LoggingHarness):
         self.assert_logged(
             "Missing required media fields in message 1",
             "[FILTER] type: clip.wav",
-            "[FILTER] format: track.mp3",
-            "[FILTER] size: track_4.wav",
-            "[FILTER] date: track_5.wav",
+            "[FILTER] format: [.mp3] track.mp3",
+            "[FILTER] size: [1 MB > 0.0 MB] track_4.wav",
+            "[FILTER] date: [2025-01-01 > 2024-01-01] track_5.wav",
             "[WARN] Invalid date format: bad-date",
             "Missing Telegram locator fields for message 8",
         )

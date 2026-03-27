@@ -3,7 +3,7 @@ import re
 import unicodedata
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Union
+from typing import Any, Dict, Optional, Union
 
 from logger import format_critical_message, get_logger
 from models import (
@@ -168,6 +168,7 @@ class MediaFilter:
     def should_process_media(self, media_info) -> bool:
         try:
             parsed_message = ParsedMessage.from_payload(media_info)
+            filename = parsed_message.filename or "unknown"
 
             if not parsed_message.is_downloadable:
                 self.logger.debug(
@@ -179,16 +180,19 @@ class MediaFilter:
                 self.logger.info(f"[FILTER] type: {parsed_message.filename}")
                 return False
 
-            if not self._check_file_format(parsed_message):
-                self.logger.info(f"[FILTER] format: {parsed_message.filename}")
+            format_details = self._get_format_filter_details(parsed_message)
+            if format_details is not None:
+                self.logger.info(f"[FILTER] format: {format_details} {filename}")
                 return False
 
-            if not self._check_file_size(parsed_message):
-                self.logger.info(f"[FILTER] size: {parsed_message.filename}")
+            size_details = self._get_size_filter_details(parsed_message)
+            if size_details is not None:
+                self.logger.info(f"[FILTER] size: {size_details} {filename}")
                 return False
 
-            if not self._check_message_date(parsed_message):
-                self.logger.info(f"[FILTER] date: {parsed_message.filename}")
+            date_details = self._get_date_filter_details(parsed_message)
+            if date_details is not None:
+                self.logger.info(f"[FILTER] date: {date_details} {filename}")
                 return False
 
             self.logger.debug(f"All filters passed: {parsed_message.filename}")
@@ -206,33 +210,41 @@ class MediaFilter:
             return True
         return media_info.media_type in self.file_types
 
-    def _check_file_format(self, media_info: ParsedMessage) -> bool:
+    def _get_format_filter_details(self, media_info: ParsedMessage) -> Optional[str]:
         if not self.allowed_formats:
-            return True
+            return None
 
         filename = media_info.filename or ""
         if not filename:
-            return False
-        return Path(filename).suffix.lower() in self.allowed_formats
+            return "[no-name]"
 
-    def _check_file_size(self, media_info: ParsedMessage) -> bool:
+        file_extension = Path(filename).suffix.lower()
+        if file_extension in self.allowed_formats:
+            return None
+
+        return f"[{file_extension or 'no-extension'}]"
+
+    def _get_size_filter_details(self, media_info: ParsedMessage) -> Optional[str]:
         file_size_bytes = media_info.file_size
-        if file_size_bytes <= 0:
-            return False
-
         file_size_mb = file_size_bytes / (1024 * 1024)
+
+        if file_size_bytes <= 0:
+            return f"[{file_size_mb:.1f} MB <= 0 MB]"
+
         min_mb = self.size_filter.get("min_mb")
         if min_mb is not None and file_size_mb < min_mb:
-            return False
+            return f"[{self._format_limit_mb(min_mb)} MB > {file_size_mb:.1f} MB]"
+
         max_mb = self.size_filter.get("max_mb")
         if max_mb is not None and file_size_mb > max_mb:
-            return False
-        return True
+            return f"[{self._format_limit_mb(max_mb)} MB < {file_size_mb:.1f} MB]"
 
-    def _check_message_date(self, media_info: ParsedMessage) -> bool:
+        return None
+
+    def _get_date_filter_details(self, media_info: ParsedMessage) -> Optional[str]:
         message_date = media_info.publish_date
         if not message_date:
-            return True
+            return None
 
         if isinstance(message_date, str):
             try:
@@ -241,15 +253,24 @@ class MediaFilter:
                 )
             except ValueError:
                 self.logger.warning(f"[WARN] Invalid date format: {message_date}")
-                return True
+                return None
+
+        message_date_str = message_date.date().isoformat()
 
         date_from = self.date_filter.get("from")
         if date_from and message_date.date() < date_from.date():
-            return False
+            date_from_str = date_from.date().isoformat()
+            return f"[{date_from_str} > {message_date_str}]"
+
         date_to = self.date_filter.get("to")
         if date_to and message_date.date() > date_to.date():
-            return False
-        return True
+            date_to_str = date_to.date().isoformat()
+            return f"[{date_to_str} < {message_date_str}]"
+
+        return None
+
+    def _format_limit_mb(self, value: float) -> str:
+        return f"{value:g}"
 
     def get_filter_summary(self) -> Dict:
         return {
