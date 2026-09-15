@@ -1,498 +1,421 @@
 # 🎵 Telegram Music Downloader
 
-> **CLI tool for downloading audio and music from Telegram channels and groups.**
-> Concurrent downloads · smart filtering · resumable sessions · full session logging.
+> **Bring your Telegram music collection to disk.**
+> Multiple channels · Parallel downloads · Flexible filters · Organized folders
+
+Download audio and document attachments from Telegram channels and groups you can
+access. Choose the formats you want, give your files useful names, and pick up
+scanning where the previous run left off.
 
 ---
 
 ## ✨ Features
 
-| | |
+| | What you can do |
 |---|---|
-| 📥 **Multi-channel download** | Download from multiple public and private channels in one run |
-| ⚡ **Concurrent workers** | Configurable parallel downloads with built-in Telegram rate limiting |
-| 🔍 **Flexible filtering** | Filter by file type, format, size range, and message date |
-| 📁 **Per-channel organization** | Separate folder and versioned state file per channel |
-| 🔄 **Resumable sessions** | Continues exactly from the last processed message ID |
-| 🏷️ **Track name normalization** | Optional automatic cleanup of downloaded filenames |
-| 📋 **Session transcript** | One centralized logger writes every event to `console.log` |
-| 🛡️ **Blacklist protection** | Files that fail on flood/timeout are auto-blacklisted per channel |
+| 📥 **Collect from multiple channels** | Keep each channel's downloads in its own folder |
+| ⚡ **Download in parallel** | Choose the worker count and pace of download attempts |
+| 🔍 **Choose what to keep** | Filter by format, size, date and track duration |
+| 🏷️ **Make filenames your own** | Use templates and optional track-name cleanup |
+| 🔄 **Continue later** | Resume scanning from the saved message checkpoint |
+| 📋 **See what happened** | Read download results, skips and errors in one session log |
 
 ---
 
-## 🛠️ Requirements
+## 🚀 Quick Start
 
-- Python **3.9+**
-- Telegram API credentials — `api_id` and `api_hash` from [my.telegram.org](https://my.telegram.org)
-- Access to the target channels or groups
+You'll need **Python 3.9+**, Telegram API credentials from
+[my.telegram.org](https://my.telegram.org), and access to your chosen channels.
+For duration filtering, you'll also need **FFmpeg's `ffprobe` on `PATH`**.
 
----
+### 📦 1. Install
 
-## 📦 Installation
+**Windows · PowerShell**
 
 ```powershell
-# 1. Clone the repository
-git clone https://github.com/MeteorBurn/telegram-music-downloader.git
+git clone https://github.com/MeteorBurn/TelegramDownloader.git telegram-music-downloader
 cd telegram-music-downloader
 
-# 2. Create a virtual environment
 python -m venv venv
-
-# 3. Activate the environment
-.\venv\Scripts\Activate.ps1        # Windows PowerShell
-venv\Scripts\activate.bat          # Windows CMD
-source venv/bin/activate           # macOS / Linux
-
-# 4. Install dependencies
-pip install -r requirements.txt
+.\venv\Scripts\python.exe -m pip install -r requirements.txt
+.\venv\Scripts\Activate.ps1
 ```
 
-### 📚 Dependencies
+<details>
+<summary>🍎 Installation on macOS / Linux</summary>
 
-| Package | Version | Purpose |
-|---|---|---|
-| `telethon` | 1.32.1 | Telegram API client |
-| `pyyaml` | 6.0.1 | YAML config parsing |
-| `python-dateutil` | 2.8.2 | Date parsing for filters |
-| `humanize` | 4.8.0 | Human-readable file sizes |
-| `aiofiles` | 23.2.1 | Async file I/O |
-| `cryptg` | 0.4.0 | Faster Telegram encryption |
+Clone the repository, then run these commands inside its folder:
 
----
+```bash
+python3 -m venv venv
+venv/bin/python -m pip install -r requirements.txt
+source venv/bin/activate
+```
 
-## ⚙️ Configuration
+</details>
 
-### 🔑 Step 1 — API Credentials
+### 🔑 2. Add your credentials and channels
 
-Get your `api_id` and `api_hash` at [my.telegram.org](https://my.telegram.org).
-
-Create `src/local_config.yaml` — this file is excluded from git and overrides `src/config.yaml`:
+Create **`src/local_config.yaml`** with your own API credentials and channel list:
 
 ```yaml
 telegram:
   api_id: 1234567
   api_hash: "your_api_hash_here"
+  two_factor_auth: true
+
+channels:
+  - "@musicchannel"       # Public channel username
+  - -1001234567890         # Private channel or group ID
+
+filters:
+  date:
+    from: "2026-01-01"    # Start with messages published from this date
 ```
 
-> 💡 `local_config.yaml` is **deep-merged** on top of `config.yaml`.
-> You only need to include the keys you want to override.
-> Always launch with `--config src/local_config.yaml` for local use.
+Your account must already have access to these channels. Keep numeric IDs as numbers,
+including the minus sign. The local file is ignored by Git.
+
+> 💡 You only need to include settings you want to change. The app automatically
+> combines `src/config.yaml` with your `src/local_config.yaml`.
+
+### 🎧 3. Start downloading
+
+```powershell
+python src/main.py --max-files 20
+```
+
+On the first run, enter your **phone number**, **verification code**, and your
+**2FA password** if requested. Keep `two_factor_auth: true` if your account uses 2FA.
+The login is saved in `telegram.session` and reused on later runs.
+
+Look in **`data/downloads/`** for your channel folders and **`console.log`** for results.
+The example queues at most 20 files; skips and failures can mean fewer files are saved.
+
+> 📌 Run commands from the project folder with the virtual environment activated.
+> On Windows, you can also use `.\venv\Scripts\python.exe` directly.
 
 ---
 
-### 📝 Step 2 — Main Config
+## ⚙️ Configuration
 
-Full reference for `src/config.yaml`:
+Use **`src/config.yaml` for the base settings** and **`src/local_config.yaml` for your
+personal overrides**. A local setting wins over its base value. Lists such as
+`channels` and `formats` replace the whole base list.
+
+### 📝 Main Config
+
+A complete example with every setting filled in: **tracks from 3 to 15 minutes,
+published during 2026**. Use it as a reference for your own settings, and replace
+the sample credentials and channels.
 
 ```yaml
 telegram:
-  api_id: 12345678           # from my.telegram.org
-  api_hash: "your_api_hash"  # from my.telegram.org
-  two_factor_auth: true      # set true if your account uses 2FA
+  api_id: 12345678
+  api_hash: "your_api_hash_here"
+  two_factor_auth: true
 
 channels:
-  - -1001234567890   # private channel / group — numeric ID with minus sign
-  - "@musicchannel"  # public channel — username with @
+  - -1001234567890
+  - "@musicchannel"
+  - -1009876543210
 
 download:
-  output_dir: "./data/downloads"   # base folder for all downloads and state files
-  timeout_between_messages: 0.3    # pause between messages in seconds (0 = no pause)
-  max_files_per_run: 100           # hard cap per session (0 = unlimited)
-  concurrent_downloads: 3          # parallel download workers (1–5 recommended)
-  max_queue_size: 100              # maximum tasks in the download queue at once
-  worker_timeout: 300              # seconds before a stalled worker is considered failed
+  output_dir: "./data/downloads"
+  timeout_between_messages: 0.3  # Pause between scanned messages, in seconds
+  max_files_per_run: 100         # Newly queued tasks across all channels; 0 = no limit
+  concurrent_downloads: 5        # Concurrent asyncio workers
+  max_queue_size: 100            # Waiting-queue capacity
+  worker_timeout: 300           # Present in config, but not used by the runtime
   rate_limit:
-    requests_per_second: 2         # Telegram API request rate limit
-    burst_size: 5                  # allowed burst above the steady rate
+    requests_per_second: 2      # Shared rate of worker download attempts
+    burst_size: 5               # Maximum token allowance
 
 naming:
-  template: "{original_name}__{message_id}"  # output filename template
-  date_format: "%Y%m%d_%H%M%S"              # date format used inside the template
+  template: "{original_name}__{message_id}"
+  date_format: "%Y%m%d_%H%M%S"
 
-normalize_track_names: false  # true = run renamer cleanup on filenames after download
+normalize_track_names: false
 
 filters:
-  file_types: ["audio", "document"]                       # accepted Telegram media types
-  formats: [".flac", ".wav", ".aiff", ".aif", ".m4a", ".dsf", ".ape", ".wv", ".mp3"]    # accepted file extensions
+  file_types: ["audio", "document"]
+  formats: [".flac", ".wav", ".aiff", ".aif", ".m4a", ".dsf", ".ape", ".wv", ".mp3"]
   size:
-    min_mb: 1     # skip files smaller than this (MB)
-    max_mb: 500   # skip files larger than this (MB)
+    min_mb: 1                   # Minimum file size, in MiB
+    max_mb: 500                 # Maximum file size, in MiB
+  duration:
+    min_sec: 180                # 3 minutes
+    max_sec: 900                # 15 minutes
   date:
-    from: "2025-01-01"  # download messages from this date (YYYY-MM-DD or null)
-    to: null            # download messages up to this date (null = no upper limit)
+    from: "2026-01-01"          # First publication date to include
+    to: "2026-12-31"            # Last publication date to include
 
 logging:
-  level: "INFO"   # DEBUG | INFO | WARNING | ERROR
-  console: true   # mirror log output to terminal
+  level: "INFO"
+  console: true
 ```
 
-> 📌 The log file is always written to `download.output_dir/console.log`.
-> There is no separate log file path key in YAML.
+> 📌 This example enables duration filtering, so it needs `ffprobe`. The supplied
+> [base config](src/config.yaml) leaves duration limits and the end date unset.
+
+### 🔍 Tune your filters
+
+| Filter | How to use it |
+|---|---|
+| **Type** | `audio` accepts audio MIME types; `document` accepts other Telegram document attachments |
+| **Format** | Use extensions such as `.flac` or `.mp3`; matching ignores case |
+| **Size** | Set `min_mb` and `max_mb`; values use MiB, shown as MB in the app |
+| **Date** | Use quoted dates like `"2026-01-01"`; `null` removes a bound |
+| **Duration** | Set `min_sec` and `max_sec`; both `null` disables the check |
+
+Size and duration bounds include their endpoints. An empty type or format list
+(`[]`) disables that filter. Photos and other non-document media are skipped.
+
+**Example: keep tracks between 3 and 15 minutes.** Add this to your local config:
+
+```yaml
+filters:
+  duration:
+    min_sec: 180
+    max_sec: 900
+```
+
+> ⏱️ Duration is checked **after the file downloads**, using `ffprobe`. Files outside
+> the range are deleted and logged as `[FILTER] duration`. If probing fails, the app
+> reports a failure and attempts to remove the file. Already-existing files are skipped
+> before this check, so changing the limit does not recheck your collection.
+
+### ⚡ Adjust download speed
+
+Start with the supplied worker count, or try `--workers 1` for an unstable connection.
+`requests_per_second` and `burst_size` control how often workers begin download
+attempts; they do not limit every Telegram request or the transfer speed in MB/s.
+
+`max_queue_size` controls how many files can wait for a worker. Scanning pauses when
+that queue fills up.
+
+> 🛠️ `worker_timeout` is present in the config but currently has no effect.
+
+### 🗂️ Use another config file
+
+```powershell
+python src/main.py --config path/to/config.yaml
+```
+
+The selected file must be a complete base config. The app then looks for
+`local_config.yaml` beside it. For the usual setup, simply run `python src/main.py`:
+passing a partial `src/local_config.yaml` directly to `--config` will not load the
+base settings first.
 
 ---
 
-### 🗂️ Filename Template Variables
+## 📥 Everyday Commands
 
-| Variable | Description | Example value |
+```powershell
+# Download with your configured settings.
+python src/main.py
+
+# Queue up to 30 files with three workers.
+python src/main.py --max-files 30 --workers 3
+
+# See stored download counts for each channel.
+python src/main.py --stats
+
+# Remove records for files you have deleted from disk.
+python src/main.py --cleanup
+```
+
+**How the file limit works:** the app uses the smaller positive limit from your
+config and `--max-files`. With `max_files_per_run: 100`, passing `--max-files 20`
+queues up to 20 tasks. Passing `--max-files 0` still leaves the config limit of 100
+in place. Set both limits to `0` for an unlimited run.
+
+<details>
+<summary>📋 All CLI options</summary>
+
+| Option | Short | What it does |
 |---|---|---|
-| `{original_name}` | Original filename without extension | `DJ Mix Vol 1` |
-| `{message_id}` | Telegram message ID | `12345` |
-| `{publish_date}` | Message publish date (uses `date_format`) | `20250315_120000` |
-| `{download_date}` | Download timestamp (uses `date_format`) | `20250325_183000` |
-| `{file_size}` | File size in bytes | `65011712` |
-| `{mime_type}` | MIME type with `/` replaced by `_` | `audio_vnd.wave` |
-| `{artist}` | Performer from Telegram audio metadata | `Artist Name` |
-| `{title}` | Title from Telegram audio metadata | `Song Title` |
-| `{duration}` | Duration in seconds from Telegram audio metadata | `375` |
+| `--config PATH` | `-c` | Select a base config; default: `src/config.yaml` |
+| `--max-files N` | `-m` | Limit queued files for this run; default: `0` |
+| `--workers N` | `-w` | Override the worker count for this run only |
+| `--stats` | `-s` | Show stored statistics without connecting to Telegram |
+| `--cleanup` | | Remove missing-file records without connecting to Telegram |
+| `--progress` | `-p` | Check in-process progress; a standalone run reports no active session |
+| `--help` | `-h` | Show command help |
 
-**Template examples:**
+Use one utility mode at a time. These modes still read your config and write to the
+log. `--progress` cannot connect to a download running in another terminal; use
+`--stats` for saved counts.
 
-| Template | Result |
+</details>
+
+---
+
+## 🏷️ Filenames
+
+The default template keeps the original name and adds the Telegram message ID:
+
+```text
+{original_name}__{message_id}  →  Artist - Track__12345.flac
+```
+
+The extension is added automatically. You can change `naming.template` with these fields:
+
+| Field | Inserts |
 |---|---|
-| `{original_name}__{message_id}` | `track__12345.flac` |
-| `{publish_date}_{original_name}` | `20250315_120000_track.flac` |
-| `{artist} - {title}__{message_id}` | `DJ Name - Song Title__12345.flac` |
+| `{original_name}` | Original filename without the extension |
+| `{message_id}` | Telegram message ID |
+| `{publish_date}` | Message date, formatted using `naming.date_format` |
+| `{download_date}` | Local time when the filename is generated |
+| `{artist}` | Performer from Telegram audio metadata |
+| `{title}` | Track title from Telegram audio metadata |
+| `{duration}` | Duration in seconds from Telegram audio metadata |
+| `{file_size}` | Reported file size in bytes |
+| `{mime_type}` | MIME type, with `/` replaced by `_` |
 
----
-
-## 🔑 How to Find a Channel or Group ID
-
-1. Forward any message from the target channel to `@ShowJsonBot`
-2. Find `"chat":{"id":-1001234567890}` in the bot's response
-3. Copy the full number **including the minus sign**
-
-> **Public channels** → use username: `@channelname`
-> **Private channels / groups** → use numeric ID: `-1001234567890`
-
----
-
-## 🚀 Usage
-
-All commands run from the repository root with the virtual environment activated.
-
-### Basic commands
-
-```powershell
-# Full download session
-python src/main.py --config src/local_config.yaml
-
-# Limit to 20 files this run
-python src/main.py --config src/local_config.yaml --max-files 20
-
-# Use 5 concurrent download workers
-python src/main.py --config src/local_config.yaml --workers 5
-
-# Recommended: 5 workers, max 30 files
-python src/main.py --config src/local_config.yaml --workers 5 --max-files 30
-```
-
-### Utility commands
-
-```powershell
-# Show per-channel statistics (no download, no Telegram connection needed)
-python src/main.py --config src/local_config.yaml --stats
-
-# Remove tracker entries for files missing from disk
-python src/main.py --config src/local_config.yaml --cleanup
-
-# Show live progress of the currently running download session
-python src/main.py --config src/local_config.yaml --progress
-```
-
-### 📋 All CLI Options
-
-| Option | Short | Type | Default | Description |
-|---|---|---|---|---|
-| `--config` | `-c` | `str` | `src/config.yaml` | Path to the YAML config file |
-| `--max-files` | `-m` | `int` | `0` | Max files to download this run (`0` = unlimited) |
-| `--workers` | `-w` | `int` | from config | Override concurrent workers for this run only |
-| `--stats` | `-s` | flag | — | Print per-channel statistics and exit (no downloads) |
-| `--cleanup` | — | flag | — | Remove tracker entries for missing files, then exit |
-| `--progress` | `-p` | flag | — | Print a live snapshot of the active download session, then exit |
-
-> ⚠️ `--workers` overrides `concurrent_downloads` for the **current run only** — it does not write back to the config file.
-> When both `max_files_per_run` (config) and `--max-files` (CLI) are set, the **lower** value applies.
-
----
-
-## 📂 Download Organization
-
-Each channel gets its own folder inside `output_dir`:
-
-```
-data/
-  downloads/
-    console.log                          ← full session log
-    MusicChannel_-1001234567890/         ← {SanitizedTitle}_{channel_id}
-    │   scan_state.json                  ← message scan checkpoint
-    │   download_state.json              ← downloaded files registry
-    │   downloads/
-    │       track1__12345.flac
-    │       track2__12346.wav
-    │
-    PublicMusic_@musicchannel/
-        scan_state.json
-        download_state.json
-        downloads/
-            ...
-```
-
-**Folder naming rule:** `{SanitizedTitle}_{channel_id_from_config}`
-
-- Title is fetched from Telegram and sanitized (special chars removed, transliterated)
-- Channel identifier is used **exactly** as written in `config.yaml`
-
-| `config.yaml` value | Folder name |
+| Example template | Example filename |
 |---|---|
-| `-1002006273817` | `MusicChannel_-1002006273817` |
-| `@publicmusic` | `PublicMusic_@publicmusic` |
+| `{original_name}__{message_id}` | `Artist - Track__12345.flac` |
+| `{publish_date}_{original_name}` | `20260916_120000_Artist - Track.flac` |
+| `{artist} - {title}__{message_id}` | `Artist - Track__12345.flac` |
 
-`telegram.session` is always stored in the **project root** — never inside `output_dir`.
+Dates use `%Y%m%d_%H%M%S` by default. Audio metadata is not always available; when a
+template cannot be filled in, the app falls back to `file_<message_id><extension>`.
 
----
+**Want cleaner names?** Set `normalize_track_names: true`. It cleans spacing,
+brackets and selected tags, and removes the trailing `__<message_id>`.
 
-## 🔐 First Run & Authentication
-
-On first run (or if `telegram.session` is missing), the app prompts interactively:
-
-1. **📱 Phone number** — international format, e.g. `+12025550123`
-2. **🔢 Verification code** — sent to your Telegram app
-3. **🔒 2FA password** — only if `two_factor_auth: true` and 2FA is enabled on the account
-
-Once authenticated, the session is saved to `telegram.session` and reused on all subsequent runs.
+> 🏷️ Normalization can give different messages the same filename. Existing ordinary
+> or normalized destination files are skipped, so choose a template with that in mind.
 
 ---
 
-## 📋 Session Log — console.log
+## 📂 Your Download Folder
 
-Every session writes a full human-readable transcript to `output_dir/console.log`.
-All events use structured `[TAG]` markers for easy grepping and parsing.
+Each channel gets its own folder, with the music and its saved progress together:
 
-### Log Markers
+```text
+telegram-music-downloader/
+├── telegram.session                  # Saved Telegram login
+└── data/downloads/
+    ├── console.log                   # Session transcript
+    ├── Music_Channel_-1001234567890/
+    │   ├── scan_state.json           # Where scanning resumes
+    │   ├── download_state.json       # Saved files and blacklist
+    │   └── downloads/
+    │       └── Artist - Track__12345.flac
+    └── Public_Music_@musicchannel/
+        └── ...
+```
 
-| Marker | Meaning |
+Folder names combine a cleaned-up channel title with the identifier from your config.
+Keep your output path and channel identifiers consistent between runs.
+
+### 🔄 Continue a previous run
+
+Run the same command again. Scanning continues after the saved checkpoint: the last
+message through which all earlier messages have finished processing. That includes
+skipped messages and ordinary failures, so those may not be tried again on the next run.
+
+### 🧹 Clean up after deleting files
+
+Run `python src/main.py --cleanup` to remove records for files that no longer exist.
+This updates the stored counts; it does not delete music or clear the blacklist.
+
+> 📌 Cleanup and filter changes **do not rewind scanning**. There is no CLI command
+> to reset the checkpoint or automatically download missing historical files again.
+
+<details>
+<summary>🔎 A few things to know about saved state</summary>
+
+- Statistics include all channel folders under the output directory, even channels
+  removed from your config. They show stored records, not a fresh integrity check.
+- A file that already exists is accepted by its path. Partial files are not resumed
+  or checked for completeness, so an interrupted download may later be skipped.
+- Ordinary download failures allow up to three attempts. Errors mentioning `flood`
+  or `timeout` add the message to that channel's blacklist; later attempts can be skipped.
+- If a state file cannot be loaded, the app logs an error and starts with empty state.
+  It does not make a recovery backup. Inspect the affected JSON before continuing.
+- The current state files use schema version 2. Legacy `message_tracker.json` and
+  `file_tracker.json` are not imported.
+
+</details>
+
+---
+
+## 📋 Session Log
+
+Open **`download.output_dir/console.log`** to see what happened during a run.
+The app appends to the same file, rotating it at 10 MiB and keeping five older copies.
+
+| Look for | Meaning |
 |---|---|
-| `[START]` / `[STOP]` | Session start and finish boundaries |
-| `[AUTH]` | Telegram connection and authentication events |
-| `[INIT]` | Component startup — trackers, workers, coordinator |
-| `[CHANNEL]` | Per-channel scan progress and results |
-| `[QUEUE]` | File added to the download queue |
-| `[OK]` | File downloaded successfully |
-| `[SKIP]` | File skipped — already downloaded, blacklisted, or name conflict |
-| `[FILTER]` | File rejected by type / format / size / date filter |
-| `[FAIL]` | Any error or failure |
-| `[CRITICAL]` | Stop-worthy runtime failure; active session is aborted |
-| `[RENAME]` | Track name normalized — shows `original → normalized` |
-| `[BLACKLIST]` | File added to or removed from the per-channel blacklist |
-| `[CLEANUP]` | Tracker cleanup of missing files |
-| `[STATS]` | Statistics display block |
-| `[RESULTS]` | Session results summary |
-| `[SUMMARY]` | Download summary with totals and speed |
-| `[WARN]` | Non-fatal warning |
-| `[WORKER_N]` | Per-worker prefix on all worker-level events |
+| `[AUTH]` · `[CHANNEL]` | Login and channel scanning |
+| `[QUEUE]` · `[WORKER_N]` | Queued files and worker activity |
+| `[OK]` | Successful download |
+| `[SKIP]` · `[FILTER]` | A file was skipped or rejected by a filter |
+| `[RENAME]` | A filename was normalized |
+| `[FAIL]` · `[CRITICAL]` | A failure that needs attention |
+| `[RESULTS]` · `[SUMMARY]` | Totals for the session |
 
-### Example Output
-
-```
-==================================================
-[START] Telegram Music Downloader Started
-==================================================
-[AUTH] Successfully connected to Telegram
-[INIT] Download coordinator starting: 5 workers, queue 100, rate 2 req/sec
-[WORKER_1] Started
-[WORKER_2] Started
-...
-[CHANNEL] Processing: -1001234567890 (Music Channel)
-[CHANNEL] Resume from message ID: 10200
-
-[QUEUE] Black Loops - CDMX__10201.wav [06:42] [78.4 MB]
-[QUEUE] Miroloja - Revolution__10202.wav [07:15] [85.1 MB]
-
-[WORKER_1] -> Downloading: Black Loops - CDMX__10201.wav [06:42] [78.4 MB]
-[WORKER_2] -> Downloading: Miroloja - Revolution__10202.wav [07:15] [85.1 MB]
-[WORKER_1] [OK] Completed: Black Loops - CDMX__10201.wav
-[WORKER_2] [OK] Completed: Miroloja - Revolution__10202.wav
-
-[SKIP] Skipped: File already downloaded: /data/downloads/OldTrack__10190.wav
-[FILTER] format: podcast_episode.mp4
-[RENAME] 'Artist Name Song Title' -> 'Artist Name - Song Title'
-
---------------------------------------------------
-[SUMMARY] Download Session Complete
-==================================================
-Files queued:     30
-Files completed:  28
-Files skipped:    2
-Files failed:     0
-Total downloaded: 1850.3 MB
-Duration:         06:12
-Avg speed:        298.1 MB/min
-Success rate:     100.0%
-==================================================
-
---------------------------------------------
-[RESULTS] Session Results
---------------------------------------------
-Channels processed:  1
-Messages scanned:    155
-Files found:         30
-Files downloaded:    28
-Files skipped:       2
-Files failed:        0
---------------------------------------------
-==================================================
-[STOP] Telegram Music Downloader Finished
-==================================================
-```
-
-> 💡 Live progress redraw (progress bar, active downloads list, ETA) is **screen-only**
-> and is never written to `console.log` to keep it readable.
-
----
-
-## ⚠️ Behavior Notes
-
-- **`--progress`** — shows a snapshot of the active in-process session; not a persisted historical view
-- **`--stats` and `--cleanup`** — work entirely from files on disk, no Telegram connection needed
-- **`--stats`** run before a download session also prints current filter and directory config
-- **Concurrency** — implemented with `asyncio` tasks and queues, not OS threads
-- **State schema** — `scan_state.json` / `download_state.json` are versioned; legacy `message_tracker.json` / `file_tracker.json` are not used
-- **Outcome semantics** — `failed` does not block scan checkpoint advancement; `critical` does
-- **Critical stop behavior** — any `critical` condition aborts the active session and logs a red-highlighted `[CRITICAL]` line to console and `console.log`
-- **File cap** — `max_files_per_run` (config) and `--max-files` (CLI) both apply; the lower value wins
-- **Auto-blacklist** — files that fail with flood or timeout errors are blacklisted per channel automatically
-- **Local config** — `local_config.yaml` deep-merges over `config.yaml`; include only the keys you want to override
-
----
-
-## 🧪 Tests
-
-Synthetic `unittest` suite — no external services, no credentials required.
-
-### ▶️ Run All Tests
-
-```powershell
-python -m unittest discover -s tests
-```
-
-### ▶️ Run a Specific Module
-
-```powershell
-python -m unittest tests.test_app
-python -m unittest tests.test_runtime
-python -m unittest tests.test_state
-python -m unittest tests.test_logging
-python -m unittest tests.test_logging.LoggingIntegrationTests
-python -m unittest tests.test_logging.LoggingMessageCoverageTests
-```
-
-### ▶️ Verbose Output
-
-```powershell
-python -m unittest discover -s tests -v
-python -m unittest tests.test_logging -v
-```
-
-### ▶️ Single Test Case
-
-```powershell
-python -m unittest tests.test_logging.LoggingIntegrationTests.test_async_concurrent_logging_records_every_message_without_hanging -v
-```
-
-### ▶️ Compile Check
-
-```powershell
-python -m compileall src tests
-```
-
-### 📊 Test Coverage
-
-| Test module | What it covers |
-|---|---|
-| `test_app.py` | App/session orchestration, config-driven commands, `--stats`, `--cleanup`, `--progress` behavior |
-| `test_runtime.py` | Channel processing, Telegram locator, queue/retry behavior, worker/coordinator/runtime flow |
-| `test_state.py` | JSON state persistence, tracker semantics, schema versioning, corrupt file recovery |
-| `test_logging.py` | Logger setup, transcript mirroring, live progress not in file, async concurrent writes, `[TAG]` marker coverage across the consolidated modules |
+Keep `logging.level: "INFO"` for everyday use; choose `"DEBUG"` when investigating a
+problem. `logging.console: false` removes the console log handler, but explicit output
+such as statistics and summaries can still appear in the terminal.
 
 ---
 
 ## 🔧 Troubleshooting
 
-| Problem | Solution |
+| What you see | What to check |
 |---|---|
-| Telegram asks for login on every run | Verify `telegram.session` exists in the project root |
-| Flood / rate limit errors | Lower `--workers` or reduce `rate_limit.requests_per_second` in config |
-| Slow or unstable connection | Run with `--workers 1` |
-| Files not downloading | Check `console.log` for `[FAIL]` lines |
-| Nothing is queued | Check `filters.date.from` and `filters.formats` — they may filter everything out |
-| Duplicate / already downloaded skipped | Expected behavior — the tracker prevents re-downloading |
-| Stale tracker entries after manual deletion | Run `--cleanup` to remove entries for files no longer on disk |
-| Wrong worker count active | `--workers` overrides `concurrent_downloads` for the current run only |
-| `--stats` shows 0 files | No state files found yet — run a download session first |
-| `output_dir` not created | Ensure the path is writable; `ConfigLoader` creates it automatically |
+| **Missing config section** | Run with the base config; a partial local override cannot stand alone |
+| **Nothing downloads** | Check channel access, the date/format/size filters, and the saved checkpoint |
+| **Fewer files than the limit** | The limit counts queued files; check the log for skips, failures and duration rejections |
+| **Could not determine duration** | Make sure `ffprobe` is on `PATH`, then read its error in the log |
+| **Flood or timeout errors** | Lower the worker count or attempt rate; check `[BLACKLIST]` entries |
+| **Files still missing after cleanup** | Cleanup updates records, but does not rescan older messages |
+| **No active session with `--progress`** | This command cannot watch another process; use `--stats` for saved counts |
 
 ---
 
-## 🔐 Security
+## 🧪 Development
 
-> ⚠️ Never commit secrets or session files.
+Dependencies are pinned in [requirements.txt](requirements.txt). Run the synthetic
+suite from the project root:
 
-| File | Why it must not be committed |
-|---|---|
-| `src/local_config.yaml` | Contains real `api_id` and `api_hash` |
-| `telegram.session` | Grants full Telegram account access |
-| `output_dir/console.log` | May contain channel names, file paths, and timing data |
-| Downloaded media files | User content — not part of the repository |
-
-All of the above are excluded by `.gitignore` by default.
-
----
-
-## 📁 Project Structure
-
-```
-telegram-music-downloader/
-├── README.md
-├── AGENTS.md                          ← agent / coding assistant guidance
-├── requirements.txt
-├── telegram.session                   ← created on first Telegram login (not in git)
-├── src/
-│   ├── main.py                        ← CLI entry point and argument parser
-│   ├── app.py                         ← session orchestration and top-level commands
-│   ├── config.py                      ← config loading, deep-merge, validation
-│   ├── telegram.py                    ← Telegram auth, entity parsing, locator reconstruction
-│   ├── channels.py                    ← filtering, channel paths, per-channel scan/queue orchestration
-│   ├── download.py                    ← file download, naming, tracker integration
-│   ├── renamer.py                     ← optional track name normalization helpers
-│   ├── runtime.py                     ← queue, workers, coordinator, progress, summaries
-│   ├── models.py                      ← shared typed domain and state models
-│   ├── state.py                       ← versioned atomic JSON state store and trackers
-│   ├── logger.py                      ← centralized logger, handlers, transcript helpers
-│   ├── config.yaml                    ← main config (committed, no secrets)
-│   └── local_config.yaml              ← local overrides and secrets (not committed)
-└── tests/
-    ├── test_app.py                    ← app/session command tests
-    ├── test_runtime.py                ← runtime, download, queue, and channel tests
-    ├── test_state.py                  ← state persistence and tracker tests
-    └── test_logging.py                ← logging pipeline and all [TAG] marker tests
+```powershell
+python -m unittest discover -s tests
 ```
 
----
+The tests use temporary files and fake Telegram clients. They do not log in to your
+account or download from Telegram; duration tests also simulate the probe result.
 
-## ✅ Verified Smoke Run
+<details>
+<summary>🛠️ Focused checks and code navigation</summary>
 
-Real local session — `--config src/local_config.yaml --workers 5 --max-files 30`:
-
-| Metric | Result |
+| Test module | Covers |
 |---|---|
-| `[QUEUE]` entries in `console.log` | **30** |
-| `[OK] Downloaded:` entries | **30** |
-| `[WORKER_N] Started` | **5** (one per worker) |
-| `[WORKER_N] Stopped` | **5** (all clean shutdowns) |
-| Dropped or missing messages | **0** |
+| `tests/test_app.py` | Statistics, cleanup, progress and configuration |
+| `tests/test_runtime.py` | Queueing, downloads, duration filtering, retries and shutdown |
+| `tests/test_state.py` | Saved state and checkpoint behavior |
+| `tests/test_logging.py` | Shared logging and session output |
+
+```powershell
+python -m unittest tests.test_runtime
+python -m compileall src tests
+git diff --check
+```
+
+Start at `src/main.py` for the CLI and `src/app.py` for session orchestration.
+[AGENTS.md](AGENTS.md) contains the full source map and development guidance.
+
+</details>
 
 ---
 
-## 📄 License
+## 🔐 Keep Your Data Private
 
-MIT
+Keep **API credentials**, **`telegram.session`**, **logs** and **downloaded media**
+out of commits. The local config, session files and default `data/` directory are
+ignored by Git. If you save downloads elsewhere, check that location separately;
+rotated logs outside `data/` are not covered by the `*.log` rule.

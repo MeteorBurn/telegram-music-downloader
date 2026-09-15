@@ -1,3 +1,5 @@
+import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -84,6 +86,10 @@ class TelegramDownloader:
             )
 
             if downloaded_file:
+                duration_outcome = self._validate_downloaded_duration(file_path)
+                if duration_outcome:
+                    return duration_outcome.to_dict()
+
                 request.extra_fields["download_date"] = datetime.now()
                 file_hash = None
 
@@ -145,6 +151,93 @@ class TelegramDownloader:
                 file_path=None,
                 logged=True,
             ).to_dict()
+
+    def _validate_downloaded_duration(
+        self, file_path: Path
+    ) -> Optional[DownloadOutcome]:
+        duration_filter = self.config.get_duration_filter()
+        min_sec = duration_filter.get("min_sec")
+        max_sec = duration_filter.get("max_sec")
+        if min_sec is None and max_sec is None:
+            return None
+
+        try:
+            duration_sec = self._probe_duration_seconds(file_path)
+        except Exception as exc:
+            reason = f"Could not determine duration: {exc}"
+            cleanup_error = self._delete_duration_rejected_file(file_path)
+            if cleanup_error:
+                reason = f"{reason}; {cleanup_error}"
+            self.logger.error(f"[FAIL] {reason}: {file_path.name}")
+            return DownloadOutcome(status="failed", reason=reason, logged=True)
+
+        if min_sec is not None and duration_sec < min_sec:
+            reason = f"Duration {duration_sec:.1f} sec is below minimum {min_sec} sec"
+            return self._build_duration_filter_outcome(
+                file_path, reason, f"[{min_sec} sec > {duration_sec:.1f} sec]"
+            )
+
+        if max_sec is not None and duration_sec > max_sec:
+            reason = f"Duration {duration_sec:.1f} sec exceeds maximum {max_sec} sec"
+            return self._build_duration_filter_outcome(
+                file_path, reason, f"[{max_sec} sec < {duration_sec:.1f} sec]"
+            )
+
+        return None
+
+    def _build_duration_filter_outcome(
+        self, file_path: Path, reason: str, details: str
+    ) -> DownloadOutcome:
+        cleanup_error = self._delete_duration_rejected_file(file_path)
+        if cleanup_error:
+            failure_reason = f"{reason}; {cleanup_error}"
+            self.logger.error(f"[FAIL] {failure_reason}: {file_path.name}")
+            return DownloadOutcome(
+                status="failed", reason=failure_reason, logged=True
+            )
+
+        self.logger.info(f"[FILTER] duration: {details} {file_path.name}")
+        return DownloadOutcome(status="skipped", reason=reason, logged=True)
+
+    def _delete_duration_rejected_file(self, file_path: Path) -> Optional[str]:
+        try:
+            file_path.unlink(missing_ok=True)
+            return None
+        except OSError as exc:
+            return f"Could not delete rejected file: {exc}"
+
+    def _probe_duration_seconds(self, file_path: Path) -> float:
+        ffprobe_path = shutil.which("ffprobe")
+        if not ffprobe_path:
+            raise RuntimeError("ffprobe executable was not found on PATH")
+
+        result = subprocess.run(
+            [
+                ffprobe_path,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(file_path),
+            ],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+        if result.returncode != 0:
+            error = result.stderr.strip() or "unknown ffprobe error"
+            raise RuntimeError(error)
+
+        try:
+            duration_sec = float(result.stdout.strip())
+        except ValueError as exc:
+            raise RuntimeError("ffprobe returned an invalid duration") from exc
+
+        if duration_sec <= 0:
+            raise RuntimeError("ffprobe returned a non-positive duration")
+        return duration_sec
 
     def _apply_normalized_filename(
         self, file_path: Path, request: DownloadRequest, file_info: str

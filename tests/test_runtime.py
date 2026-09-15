@@ -124,9 +124,15 @@ class FakeConfig:
 
 
 class FakeDownloadConfig:
-    def __init__(self, download_dir: str, normalize_track_names: bool = True):
+    def __init__(
+        self,
+        download_dir: str,
+        normalize_track_names: bool = True,
+        duration_filter=None,
+    ):
         self.download_dir = download_dir
         self.normalize_track_names = normalize_track_names
+        self.duration_filter = duration_filter or {"min_sec": None, "max_sec": None}
 
     def get_download_dir(self) -> str:
         return self.download_dir
@@ -139,6 +145,9 @@ class FakeDownloadConfig:
 
     def get_normalize_track_names(self) -> bool:
         return self.normalize_track_names
+
+    def get_duration_filter(self):
+        return self.duration_filter
 
 
 class FakeDownloadClient:
@@ -380,6 +389,78 @@ class DownloadRequestTests(unittest.TestCase):
 
 
 class DownloaderNormalizationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_duration_outside_filter_is_deleted_and_skipped(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = FakeDownloadConfig(
+                temp_dir,
+                normalize_track_names=False,
+                duration_filter={"min_sec": 180, "max_sec": 900},
+            )
+            client = FakeDownloadClient()
+            downloader = TelegramDownloader(client, config)
+            downloader._get_message_by_id = lambda _payload: asyncio.sleep(
+                0, result=SimpleNamespace(media=SimpleNamespace(document=object()))
+            )
+            downloader._probe_duration_seconds = lambda _path: 125.0
+
+            with self.assertLogs("telegram_music_downloader", level="INFO") as logs:
+                result = await downloader.download_media_file(build_media_info(124))
+
+            expected_path = Path(temp_dir) / "track_124__124.mp3"
+            self.assertEqual(result["status"], "skipped")
+            self.assertIn("Duration 125.0 sec is below minimum 180 sec", result["reason"])
+            self.assertIn(
+                "[FILTER] duration: [180 sec > 125.0 sec] track_124__124.mp3",
+                "\n".join(logs.output),
+            )
+            self.assertFalse(expected_path.exists())
+
+    async def test_duration_probe_failure_deletes_file_and_returns_failed(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = FakeDownloadConfig(
+                temp_dir,
+                normalize_track_names=False,
+                duration_filter={"min_sec": 180, "max_sec": 900},
+            )
+            client = FakeDownloadClient()
+            downloader = TelegramDownloader(client, config)
+            downloader._get_message_by_id = lambda _payload: asyncio.sleep(
+                0, result=SimpleNamespace(media=SimpleNamespace(document=object()))
+            )
+
+            def _raise_probe_error(_path):
+                raise RuntimeError("ffprobe could not read duration")
+
+            downloader._probe_duration_seconds = _raise_probe_error
+
+            result = await downloader.download_media_file(build_media_info(125))
+
+            expected_path = Path(temp_dir) / "track_125__125.mp3"
+            self.assertEqual(result["status"], "failed")
+            self.assertIn("ffprobe could not read duration", result["reason"])
+            self.assertFalse(expected_path.exists())
+
+    async def test_duration_above_filter_is_deleted_and_skipped(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = FakeDownloadConfig(
+                temp_dir,
+                normalize_track_names=False,
+                duration_filter={"min_sec": 180, "max_sec": 900},
+            )
+            client = FakeDownloadClient()
+            downloader = TelegramDownloader(client, config)
+            downloader._get_message_by_id = lambda _payload: asyncio.sleep(
+                0, result=SimpleNamespace(media=SimpleNamespace(document=object()))
+            )
+            downloader._probe_duration_seconds = lambda _path: 960.0
+
+            result = await downloader.download_media_file(build_media_info(126))
+
+            expected_path = Path(temp_dir) / "track_126__126.mp3"
+            self.assertEqual(result["status"], "skipped")
+            self.assertIn("Duration 960.0 sec exceeds maximum 900 sec", result["reason"])
+            self.assertFalse(expected_path.exists())
+
     async def test_existing_normalized_name_skips_before_download(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             config = FakeDownloadConfig(temp_dir, normalize_track_names=True)

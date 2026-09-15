@@ -37,6 +37,9 @@ filters:
   size:
     min_mb: 1     # Minimum file size in MB
     max_mb: 500   # Maximum file size in MB
+  duration:
+    min_sec: null  # Minimum track duration in seconds (null = no limit)
+    max_sec: null  # Maximum track duration in seconds (null = no limit)
   date:
     from: "2026-01-01"  # Download messages from this date (YYYY-MM-DD)
     to: null            # Until current date (null = no limit)

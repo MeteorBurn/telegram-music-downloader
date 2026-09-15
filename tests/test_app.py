@@ -48,6 +48,9 @@ def write_temp_config(config_path: Path, output_dir: Path) -> None:
                 "  size:",
                 "    min_mb: 1",
                 "    max_mb: 500",
+                "  duration:",
+                "    min_sec: 180",
+                "    max_sec: 900",
                 "  date:",
                 '    from: "2025-01-01"',
                 "    to: null",
@@ -161,6 +164,16 @@ class SessionRunnerCommandTests(unittest.IsolatedAsyncioTestCase):
         await runner.close()
 
         self.assertIn("No active in-process download session", output.getvalue())
+
+    async def test_config_reads_duration_filter_limits(self):
+        runner = SessionRunner(str(self.config_path))
+        try:
+            self.assertEqual(
+                runner.config.get_duration_filter(),
+                {"min_sec": 180, "max_sec": 900},
+            )
+        finally:
+            await runner.close()
 
 
 if __name__ == "__main__":

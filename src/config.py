@@ -174,6 +174,13 @@ class ConfigLoader:
             "max_mb": size_config.get("max_mb"),
         }
 
+    def get_duration_filter(self) -> Dict[str, Optional[int]]:
+        duration_config = self._config["filters"].get("duration", {})
+        return {
+            "min_sec": duration_config.get("min_sec"),
+            "max_sec": duration_config.get("max_sec"),
+        }
+
     def get_date_filter(self) -> Dict[str, Optional[datetime]]:
         date_config = self._config["filters"].get("date", {})
         date_from = date_config.get("from")
