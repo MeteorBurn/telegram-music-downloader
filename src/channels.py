@@ -12,6 +12,7 @@ from models import (
     DownloadRequest,
     ParsedMessage,
     QueuedMessageContext,
+    get_audio_duration_seconds,
 )
 
 
@@ -164,6 +165,7 @@ class MediaFilter:
         self.file_types = self.config.get_file_types()
         self.size_filter = self.config.get_size_filter()
         self.date_filter = self.config.get_date_filter()
+        self.duration_filter = self.config.get_duration_filter()
 
     def should_process_media(self, media_info) -> bool:
         try:
@@ -193,6 +195,11 @@ class MediaFilter:
             date_details = self._get_date_filter_details(parsed_message)
             if date_details is not None:
                 self.logger.info(f"[FILTER] date: {date_details} {filename}")
+                return False
+
+            duration_details = self._get_duration_filter_details(parsed_message)
+            if duration_details is not None:
+                self.logger.info(f"[FILTER] duration: {duration_details} {filename}")
                 return False
 
             self.logger.debug(f"All filters passed: {parsed_message.filename}")
@@ -266,6 +273,21 @@ class MediaFilter:
         if date_to and message_date.date() > date_to.date():
             date_to_str = date_to.date().isoformat()
             return f"[{date_to_str} < {message_date_str}]"
+
+        return None
+
+    def _get_duration_filter_details(self, media_info: ParsedMessage) -> Optional[str]:
+        duration_sec = get_audio_duration_seconds(media_info.audio_meta)
+        if duration_sec is None:
+            return None
+
+        min_sec = self.duration_filter.get("min_sec")
+        if min_sec is not None and duration_sec < min_sec:
+            return f"[{min_sec} sec > {duration_sec:.1f} sec]"
+
+        max_sec = self.duration_filter.get("max_sec")
+        if max_sec is not None and duration_sec > max_sec:
+            return f"[{max_sec} sec < {duration_sec:.1f} sec]"
 
         return None
 
@@ -480,9 +502,9 @@ class ChannelProcessor:
 
     def _build_file_info_str(self, request: DownloadRequest) -> str:
         duration_str = ""
-        if request.audio_meta and request.audio_meta.get("duration"):
-            duration = request.audio_meta["duration"]
-            minutes, seconds = divmod(duration, 60)
+        duration = get_audio_duration_seconds(request.audio_meta)
+        if duration is not None:
+            minutes, seconds = divmod(int(duration), 60)
             duration_str = f"[{minutes:02d}:{seconds:02d}]"
 
         file_size_mb = request.file_size / (1024 * 1024)

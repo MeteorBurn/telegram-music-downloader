@@ -26,7 +26,8 @@ scanning where the previous run left off.
 
 You'll need **Python 3.9+**, Telegram API credentials from
 [my.telegram.org](https://my.telegram.org), and access to your chosen channels.
-For duration filtering, you'll also need **FFmpeg's `ffprobe` on `PATH`**.
+For duration filtering when Telegram has no usable audio duration, you'll also
+need **FFmpeg's `ffprobe` on `PATH`**.
 
 ### 📦 1. Install
 
@@ -155,7 +156,7 @@ logging:
   console: true
 ```
 
-> 📌 This example enables duration filtering, so it needs `ffprobe`. The supplied
+> 📌 This example enables duration filtering, with `ffprobe` as a fallback. The supplied
 > [base config](src/config.yaml) leaves duration limits and the end date unset.
 
 ### 🔍 Tune your filters
@@ -180,10 +181,12 @@ filters:
     max_sec: 900
 ```
 
-> ⏱️ Duration is checked **after the file downloads**, using `ffprobe`. Files outside
-> the range are deleted and logged as `[FILTER] duration`. If probing fails, the app
-> reports a failure and attempts to remove the file. Already-existing files are skipped
-> before this check, so changing the limit does not recheck your collection.
+> ⏱️ Telegram audio duration is checked **during scanning, before queueing**. Files
+> outside the range are skipped and logged as `[FILTER] duration`. A positive, finite
+> numeric duration is used directly. Missing, zero, negative or invalid metadata falls
+> back to `ffprobe` **after downloading**; rejected files are deleted. If probing fails,
+> the app reports a failure and attempts to remove the file. Existing-file skips bypass
+> this fallback, so changing the limit does not recheck files already in your collection.
 
 ### ⚡ Adjust download speed
 
@@ -282,11 +285,45 @@ The extension is added automatically. You can change `naming.template` with thes
 Dates use `%Y%m%d_%H%M%S` by default. Audio metadata is not always available; when a
 template cannot be filled in, the app falls back to `file_<message_id><extension>`.
 
-**Want cleaner names?** Set `normalize_track_names: true`. It cleans spacing,
-brackets and selected tags, and removes the trailing `__<message_id>`.
+**Want cleaner names?** Set `normalize_track_names: true`. It normalizes spacing
+and Unicode, replaces underscores with spaces, removes terminal `__digits` IDs,
+and removes repeated audio extensions matching the actual file suffix. Known mix
+phrases and complete version groups move to the end, followed by square-bracket
+labels. An explicitly separated version such as
+`Artist - Track - Alice Remix` becomes `Artist - Track (Alice Remix)`.
 
-> 🏷️ Normalization can give different messages the same filename. Existing ordinary
-> or normalized destination files are skipped, so choose a template with that in mind.
+**Track numbering:** vinyl positions such as `A1` and `B2` move to the beginning,
+including forms such as `B2.`. When an ordinal and vinyl position occur together
+at the start of the name or a dash-separated field, the vinyl position takes
+precedence: `Artist - Release Name - 04 B2. Title` becomes
+`B2 Artist - Release Name - Title`.
+Other numeric track positions are retained.
+
+Cleanup removes Camelot key markers, release tags such as `WEB`, `PROMO`, `FLAC`,
+`EP` and `VINYL ONLY` in metadata positions, empty brackets, technical suffixes
+such as `24bit 48kHz`, isolated source URL suffixes, and repeated version groups.
+Recognized mastering suffixes such as `MBMASTER2`, `MSTR24` or `(Master)` and
+separated copy suffixes such as `Artist - Track - Copy` are also removed.
+
+**Version labels:** explicit split labels such as `Original Extended (Version)`,
+`Extended (Remix)` and `Radio (Edit)` are joined inside parentheses. Complete
+groups such as `(Original Mix)` are kept intact: `Paid In Full (Original Mix)`
+and `All Night Long (Original Mix)` keep their title words. Ambiguous qualifiers
+are left outside the version group. Musical versions such as `Instrumental`,
+`Full`, `Clean`/`Dirty`, punctuation in initials/ellipsis, and mixed-case words
+such as `Web` or `Vinyl` inside names are retained.
+
+Unknown working markers and ambiguous fragments remain for review. Bracket repair
+is limited to an unambiguous terminal version/technical group with mismatched
+delimiters. Unsafe results keep the generated name. DEBUG logs include change
+reasons and ambiguity warnings. Existing library files are not renamed automatically.
+
+> 🏷️ Different messages can normalize to the same filename. When that destination
+> exists, the new file is downloaded and compared by content. Identical files are
+> skipped and the new copy is removed; different content or a comparison error keeps
+> the new file under its generated name. Already-tracked messages and existing generated
+> paths can still skip downloading. Keep `{message_id}` in the template to distinguish
+> generated paths.
 
 ---
 
@@ -396,7 +433,7 @@ account or download from Telegram; duration tests also simulate the probe result
 | Test module | Covers |
 |---|---|
 | `tests/test_app.py` | Statistics, cleanup, progress and configuration |
-| `tests/test_runtime.py` | Queueing, downloads, duration filtering, retries and shutdown |
+| `tests/test_runtime.py` | Queueing, downloads, Telegram duration and probe fallback, filename collisions, retries and shutdown |
 | `tests/test_state.py` | Saved state and checkpoint behavior |
 | `tests/test_logging.py` | Shared logging and session output |
 

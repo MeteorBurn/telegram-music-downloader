@@ -4,9 +4,11 @@ import logging
 import sys
 import tempfile
 import unittest
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -15,11 +17,11 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 
-from channels import ChannelProcessor
+from channels import ChannelProcessor, MediaFilter
 from download import TelegramDownloader
 from models import DownloadOutcome, DownloadRequest
 from runtime import DownloadCoordinator, DownloadQueue, DownloadTask, RateLimiter
-from state import MessageTracker, TrackerManager
+from state import FileTracker, MessageTracker, TrackerManager
 from telegram import TelegramDocumentLocator
 
 
@@ -149,6 +151,18 @@ class FakeDownloadConfig:
     def get_duration_filter(self):
         return self.duration_filter
 
+    def get_allowed_formats(self):
+        return [".mp3"]
+
+    def get_file_types(self):
+        return ["audio", "document"]
+
+    def get_size_filter(self):
+        return {"min_mb": None, "max_mb": None}
+
+    def get_date_filter(self):
+        return {"from": None, "to": None}
+
 
 class FakeDownloadClient:
     def __init__(self):
@@ -172,6 +186,67 @@ def build_media_info(message_id: int) -> dict:
 
 
 class ChannelProcessorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_duration_metadata_filters_before_queueing(self):
+        cases = [
+            (180, 900, [125, 960, 180, 900], [3, 4], 2),
+            (180, 900, [179.9, 900.1, 180.5, 899.9], [3, 4], 2),
+            (180, None, [125, 180, 960], [2, 3], 1),
+            (None, 900, [960, 125, 900], [2, 3], 1),
+            (None, None, [125, 960], [1, 2], None),
+        ]
+        for min_sec, max_sec, durations, expected_ids, checkpoint in cases:
+            with self.subTest(min_sec=min_sec, max_sec=max_sec):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    config = FakeDownloadConfig(
+                        temp_dir,
+                        duration_filter={"min_sec": min_sec, "max_sec": max_sec},
+                    )
+                    messages = [
+                        {
+                            **build_media_info(message_id),
+                            "has_media": True,
+                            "audio_meta": {"duration": duration},
+                            "document_id": message_id + 100,
+                            "access_hash": message_id + 1000,
+                            "file_reference": b"ref",
+                        }
+                        for message_id, duration in enumerate(durations, start=1)
+                    ]
+                    tracker_manager = TrackerManager(temp_dir)
+                    coordinator = FakeDownloadCoordinator()
+                    processor = ChannelProcessor(
+                        FakeParser(messages),
+                        MediaFilter(config),
+                        tracker_manager,
+                        coordinator,
+                        logging.getLogger("channel_processor_test"),
+                    )
+
+                    result = await processor.process_channel(
+                        "-100test",
+                        SimpleNamespace(title="Synthetic Channel"),
+                        max_files=2,
+                    )
+
+                    self.assertEqual(result["messages_processed"], len(messages))
+                    self.assertEqual(result["files_found"], 2)
+                    self.assertEqual(result["files_queued"], 2)
+                    self.assertEqual(
+                        [request.message_id for request, _ in coordinator.queued_tasks],
+                        expected_ids,
+                    )
+                    tracker = tracker_manager.message_trackers["-100test"]
+                    self.assertEqual(tracker.get_last_processed_id(), checkpoint)
+                    for request, _ in coordinator.queued_tasks:
+                        self.assertEqual(
+                            request.audio_meta["duration"],
+                            durations[request.message_id - 1],
+                        )
+                        request.outcome_callback(
+                            "completed", None, {"status": "success"}
+                        )
+                    self.assertEqual(tracker.get_last_processed_id(), len(messages))
+
     async def test_process_channel_handles_skips_and_deferred_completion(self):
         messages = [
             {"message_id": 1, "has_media": False},
@@ -389,31 +464,195 @@ class DownloadRequestTests(unittest.TestCase):
 
 
 class DownloaderNormalizationTests(unittest.IsolatedAsyncioTestCase):
-    async def test_duration_outside_filter_is_deleted_and_skipped(self):
+    async def test_normalized_file_is_registered_at_actual_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            config = FakeDownloadConfig(
-                temp_dir,
-                normalize_track_names=False,
-                duration_filter={"min_sec": 180, "max_sec": 900},
-            )
+            config = FakeDownloadConfig(temp_dir)
             client = FakeDownloadClient()
-            downloader = TelegramDownloader(client, config)
+            tracker = FileTracker(str(Path(temp_dir) / "download_state.json"), "test-channel")
+            downloader = TelegramDownloader(client, config, tracker)
             downloader._get_message_by_id = lambda _payload: asyncio.sleep(
                 0, result=SimpleNamespace(media=SimpleNamespace(document=object()))
             )
-            downloader._probe_duration_seconds = lambda _path: 125.0
+            request = {
+                **build_media_info(130),
+                "filename": "[LABEL] Artist_-_Track_-_Alice_Remix WEB 320kbps 8A.FLAC",
+            }
 
-            with self.assertLogs("telegram_music_downloader", level="INFO") as logs:
-                result = await downloader.download_media_file(build_media_info(124))
+            result = await downloader.download_media_file(request)
 
-            expected_path = Path(temp_dir) / "track_124__124.mp3"
-            self.assertEqual(result["status"], "skipped")
-            self.assertIn("Duration 125.0 sec is below minimum 180 sec", result["reason"])
-            self.assertIn(
-                "[FILTER] duration: [180 sec > 125.0 sec] track_124__124.mp3",
-                "\n".join(logs.output),
+            expected = Path(temp_dir) / "Artist - Track (Alice Remix) [LABEL].FLAC"
+            self.assertEqual(result["status"], "success")
+            self.assertEqual(Path(result["file_path"]), expected)
+            self.assertEqual(expected.read_bytes(), b"downloaded-audio")
+            self.assertEqual(client.download_calls, 1)
+            self.assertEqual(tracker.get_downloaded_file_by_message(130)["file_path"], str(expected))
+            self.assertFalse((Path(temp_dir) / (Path(request["filename"]).stem + "__130.FLAC")).exists())
+
+    async def test_distinct_musical_versions_are_all_downloaded(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            client = FakeDownloadClient()
+            downloader = TelegramDownloader(client, FakeDownloadConfig(temp_dir))
+            downloader._get_message_by_id = lambda _payload: asyncio.sleep(
+                0, result=SimpleNamespace(media=SimpleNamespace(document=object()))
             )
-            self.assertFalse(expected_path.exists())
+            names = ("Artist - Track", "Artist - Track (Instrumental)",
+                     "Artist - Track (Alice Remix)", "Artist - Track (Bob Remix)")
+            for message_id, name in enumerate(names, 150):
+                with self.subTest(name=name):
+                    result = await downloader.download_media_file(
+                        {**build_media_info(message_id), "filename": name + ".wav"}
+                    )
+                    self.assertEqual(result["status"], "success")
+                    self.assertEqual(Path(result["file_path"]).name, name + ".wav")
+            self.assertEqual(client.download_calls, 4)
+            self.assertEqual({p.name for p in Path(temp_dir).iterdir()}, {n + ".wav" for n in names})
+
+    async def test_unsafe_normalized_name_keeps_downloaded_file(self):
+        filenames = ("().wav", "CON [24bit].wav", "A" * 242 + "(PartTwo).wav")
+        for filename in filenames:
+            with self.subTest(filename=filename), tempfile.TemporaryDirectory() as temp_dir:
+                downloader = TelegramDownloader(
+                    FakeDownloadClient(), FakeDownloadConfig(temp_dir)
+                )
+                downloader.naming_template = "{original_name}"
+                downloader._get_message_by_id = lambda _payload: asyncio.sleep(
+                    0, result=SimpleNamespace(media=SimpleNamespace(document=object()))
+                )
+                result = await downloader.download_media_file(
+                    {**build_media_info(160), "filename": filename}
+                )
+                self.assertEqual(result["status"], "success")
+                self.assertEqual(Path(result["file_path"]).name, filename)
+                self.assertEqual(Path(result["file_path"]).read_bytes(), b"downloaded-audio")
+
+    async def test_destination_appearing_during_download_keeps_both_files(self):
+        for race_at_rename in (False, True):
+            with self.subTest(race_at_rename=race_at_rename), tempfile.TemporaryDirectory() as temp_dir:
+                target = Path(temp_dir) / "Artist - Track.wav"
+                client = FakeDownloadClient()
+                real_download = client.download_media
+
+                async def download(document, file):
+                    result = await real_download(document, file)
+                    if not race_at_rename:
+                        target.write_bytes(b"existing-content")
+                    return result
+
+                def race_rename(source, destination):
+                    target.write_bytes(b"existing-content")
+                    raise FileExistsError(str(destination))
+
+                client.download_media = download
+                downloader = TelegramDownloader(client, FakeDownloadConfig(temp_dir))
+                downloader._get_message_by_id = lambda _payload: asyncio.sleep(
+                    0, result=SimpleNamespace(media=SimpleNamespace(document=object()))
+                )
+                rename_context = (
+                    patch.object(Path, "rename", race_rename)
+                    if race_at_rename else nullcontext()
+                )
+                with rename_context:
+                    result = await downloader.download_media_file(
+                        {**build_media_info(170), "filename": "Artist - Track.wav"}
+                    )
+                downloaded = Path(temp_dir) / "Artist - Track__170.wav"
+                self.assertEqual(result["status"], "success")
+                self.assertEqual(Path(result["file_path"]), downloaded)
+                self.assertEqual(target.read_bytes(), b"existing-content")
+                self.assertEqual(client.download_calls, 1)
+                self.assertEqual(downloaded.read_bytes(), b"downloaded-audio")
+
+    async def test_known_duration_does_not_probe_downloaded_file(self):
+        for duration in (180, 300.5, 900):
+            with self.subTest(duration=duration):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    config = FakeDownloadConfig(
+                        temp_dir,
+                        normalize_track_names=False,
+                        duration_filter={"min_sec": 180, "max_sec": 900},
+                    )
+                    downloader = TelegramDownloader(FakeDownloadClient(), config)
+                    downloader._get_message_by_id = lambda _payload: asyncio.sleep(
+                        0, result=SimpleNamespace(media=SimpleNamespace(document=object()))
+                    )
+
+                    def unexpected_probe(_path):
+                        self.fail("Known Telegram duration must not invoke ffprobe")
+
+                    downloader._probe_duration_seconds = unexpected_probe
+                    media_info = build_media_info(124)
+                    media_info["audio_meta"] = {"duration": duration}
+
+                    result = await downloader.download_media_file(media_info)
+
+                    self.assertEqual(result["status"], "success")
+                    self.assertEqual(
+                        Path(result["file_path"]).read_bytes(), b"downloaded-audio"
+                    )
+
+    async def test_missing_duration_is_queued_then_probed_and_rejected(self):
+        missing_metadata = [None, {}, {"title": "Track"}]
+        invalid_durations = [None, 0, -1, "unknown", float("nan"), float("inf"), True]
+        missing_metadata.extend({"duration": value} for value in invalid_durations)
+        for audio_meta in missing_metadata:
+            with self.subTest(audio_meta=audio_meta):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    config = FakeDownloadConfig(
+                        temp_dir,
+                        normalize_track_names=False,
+                        duration_filter={"min_sec": 180, "max_sec": 900},
+                    )
+                    client = FakeDownloadClient()
+                    downloader = TelegramDownloader(client, config)
+                    downloader._get_message_by_id = lambda _payload: asyncio.sleep(
+                        0, result=SimpleNamespace(media=SimpleNamespace(document=object()))
+                    )
+
+                    def probe_downloaded_file(path):
+                        self.assertEqual(path.read_bytes(), b"downloaded-audio")
+                        return 125.0
+
+                    downloader._probe_duration_seconds = probe_downloaded_file
+                    media_info = {
+                        **build_media_info(124),
+                        "has_media": True,
+                        "audio_meta": audio_meta,
+                        "document_id": 224,
+                        "access_hash": 1124,
+                        "file_reference": b"ref",
+                    }
+                    coordinator = FakeDownloadCoordinator()
+                    tracker_manager = TrackerManager(temp_dir)
+                    processor = ChannelProcessor(
+                        FakeParser([media_info]),
+                        MediaFilter(config),
+                        tracker_manager,
+                        coordinator,
+                        logging.getLogger("channel_processor_test"),
+                    )
+
+                    scan_result = await processor.process_channel(
+                        "-100test", SimpleNamespace(title="Synthetic Channel")
+                    )
+                    self.assertEqual(scan_result["files_queued"], 1)
+                    request, file_info = coordinator.queued_tasks[0]
+                    with self.assertLogs(
+                        "telegram_music_downloader", level="INFO"
+                    ) as logs:
+                        result = await downloader.download_media_file(request, file_info)
+
+                    self.assertEqual(client.download_calls, 1)
+                    self.assertEqual(result["status"], "skipped")
+                    self.assertIn(
+                        "Duration 125.0 sec is below minimum 180 sec", result["reason"]
+                    )
+                    self.assertIn(
+                        "[FILTER] duration: [180 sec > 125.0 sec] track_124__124.mp3",
+                        "\n".join(logs.output),
+                    )
+                    expected_path = Path(request.download_dir) / "track_124__124.mp3"
+                    self.assertFalse(expected_path.exists())
+                    self.assertEqual(request.file_tracker.downloaded_files, {})
 
     async def test_duration_probe_failure_deletes_file_and_returns_failed(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -461,7 +700,7 @@ class DownloaderNormalizationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Duration 960.0 sec exceeds maximum 900 sec", result["reason"])
             self.assertFalse(expected_path.exists())
 
-    async def test_existing_normalized_name_skips_before_download(self):
+    async def test_existing_normalized_name_compares_content_before_skipping(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             config = FakeDownloadConfig(temp_dir, normalize_track_names=True)
             client = FakeDownloadClient()
@@ -470,14 +709,14 @@ class DownloaderNormalizationTests(unittest.IsolatedAsyncioTestCase):
                 0, result=SimpleNamespace(media=SimpleNamespace(document=object()))
             )
 
-            final_path = Path(temp_dir) / "Pancratio - Badass Music.flac"
-            final_path.write_bytes(b"existing-audio")
+            final_path = Path(temp_dir) / "Artist - Track (Alice Remix).FLAC"
+            final_path.write_bytes(b"downloaded-audio")
 
             result = await downloader.download_media_file(
                 {
                     "message_id": 123,
                     "channel_id": "test-channel",
-                    "filename": "Pancratio - Badass Music.flac",
+                    "filename": "[PROMO] Artist_-_Track_-_Alice_Remix.FLAC.FLAC",
                     "file_size": 1024,
                     "type": "audio",
                     "mime_type": "audio/flac",
@@ -487,14 +726,25 @@ class DownloaderNormalizationTests(unittest.IsolatedAsyncioTestCase):
                 }
             )
 
-            temp_path = Path(temp_dir) / "Pancratio - Badass Music__123.flac"
+            temp_path = Path(temp_dir) / "[PROMO] Artist_-_Track_-_Alice_Remix.FLAC__123.FLAC"
 
             self.assertEqual(result["status"], "skipped")
-            self.assertIn("Normalized file already exists", result["reason"])
+            self.assertIn("Identical normalized file already exists", result["reason"])
             self.assertEqual(result["file_path"], str(final_path))
             self.assertTrue(final_path.exists())
             self.assertFalse(temp_path.exists())
-            self.assertEqual(client.download_calls, 0)
+            self.assertEqual(client.download_calls, 1)
+
+            final_path.write_bytes(b"existing-content")
+            result = await downloader.download_media_file(
+                {**build_media_info(124), "filename": "Artist - Track - Alice Remix.FLAC"}
+            )
+            kept = Path(temp_dir) / "Artist - Track - Alice Remix__124.FLAC"
+            self.assertEqual(result["status"], "success")
+            self.assertEqual(Path(result["file_path"]), kept)
+            self.assertEqual(kept.read_bytes(), b"downloaded-audio")
+            self.assertEqual(final_path.read_bytes(), b"existing-content")
+            self.assertEqual(client.download_calls, 2)
 
 
 class DownloadQueueTests(unittest.IsolatedAsyncioTestCase):

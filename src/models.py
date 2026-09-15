@@ -1,10 +1,24 @@
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from math import isfinite
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 
 OutcomeCallback = Callable[[str, Any, Optional[Dict[str, Any]]], None]
+
+
+def get_audio_duration_seconds(audio_meta: Optional[Dict[str, Any]]) -> Optional[float]:
+    """Return usable Telegram duration, or None when a file probe is needed."""
+    duration = (audio_meta or {}).get("duration")
+    if (
+        isinstance(duration, (int, float))
+        and not isinstance(duration, bool)
+        and isfinite(duration)
+        and duration > 0
+    ):
+        return float(duration)
+    return None
 
 
 @dataclass

@@ -1,3 +1,4 @@
+import asyncio
 import shutil
 import subprocess
 from datetime import datetime
@@ -5,8 +6,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from logger import get_logger
-from models import DownloadOutcome, DownloadRequest
-from renamer import normalize_track_name
+from models import DownloadOutcome, DownloadRequest, get_audio_duration_seconds
+from renamer import analyze_track_name
 from telegram import create_telegram_locator
 
 
@@ -49,16 +50,7 @@ class TelegramDownloader:
             download_dir = Path(request.download_dir or self.download_dir)
             download_dir.mkdir(parents=True, exist_ok=True)
             file_path = download_dir / filename
-            predicted_final_path = self._predict_final_path(file_path)
-
-            if predicted_final_path != file_path and predicted_final_path.exists():
-                return await self._build_existing_file_skip_result(
-                    request,
-                    file_info,
-                    file_tracker,
-                    predicted_final_path,
-                    "Normalized file already exists",
-                )
+            predicted_final_path = self._predict_final_path(file_path, request.message_id)
 
             if file_path.exists():
                 return await self._build_existing_file_skip_result(
@@ -86,24 +78,24 @@ class TelegramDownloader:
             )
 
             if downloaded_file:
-                duration_outcome = self._validate_downloaded_duration(file_path)
-                if duration_outcome:
-                    return duration_outcome.to_dict()
+                if get_audio_duration_seconds(request.audio_meta) is None:
+                    duration_outcome = self._validate_downloaded_duration(file_path)
+                    if duration_outcome:
+                        return duration_outcome.to_dict()
 
                 request.extra_fields["download_date"] = datetime.now()
                 file_hash = None
 
                 if self.config.get_normalize_track_names():
-                    normalization_result = self._apply_normalized_filename(
-                        file_path, request, file_info
+                    normalization_result = await self._apply_normalized_filename(
+                        file_path, predicted_final_path, request, file_info
                     )
                     if normalization_result["status"] == "skipped":
-                        return DownloadOutcome(
-                            status="skipped",
-                            reason=normalization_result["reason"],
-                            file_path=normalization_result["file_path"],
-                            logged=True,
-                        ).to_dict()
+                        return await self._build_existing_file_skip_result(
+                            request, file_info, file_tracker,
+                            Path(normalization_result["file_path"]),
+                            "Identical normalized file already exists",
+                        )
                     file_path = normalization_result["file_path"]
 
                 if file_tracker:
@@ -239,72 +231,89 @@ class TelegramDownloader:
             raise RuntimeError("ffprobe returned a non-positive duration")
         return duration_sec
 
-    def _apply_normalized_filename(
-        self, file_path: Path, request: DownloadRequest, file_info: str
+    async def _apply_normalized_filename(
+        self,
+        file_path: Path,
+        normalized_path: Path,
+        request: DownloadRequest,
+        file_info: str,
     ) -> Dict[str, Any]:
         original_name = file_path.stem
-        original_suffix = file_path.suffix
-        normalized_name = normalize_track_name(original_name)
+        normalized_name = normalized_path.stem
 
-        if normalized_name == original_name:
+        if normalized_path == file_path:
             return {"status": "success", "file_path": file_path}
 
-        normalized_file_name = normalized_name + original_suffix
-        normalized_path = file_path.with_name(normalized_file_name)
-
         if normalized_path.exists():
-            if file_path.exists():
-                file_path.unlink()
-            skip_reason = f"Normalized file already exists: {normalized_path}"
-            self.logger.info(
-                f"[SKIP] Skipped: {request.filename} {file_info} - {skip_reason}"
+            return await self._resolve_normalization_collision(
+                file_path, normalized_path, request, file_info
             )
-            return {
-                "status": "skipped",
-                "reason": skip_reason,
-                "file_path": str(normalized_path),
-            }
 
         try:
             file_path.rename(normalized_path)
         except FileExistsError:
-            if file_path.exists():
-                file_path.unlink()
-            skip_reason = f"Normalized file already exists: {normalized_path}"
-            self.logger.info(
-                f"[SKIP] Skipped: {request.filename} {file_info} - {skip_reason}"
+            return await self._resolve_normalization_collision(
+                file_path, normalized_path, request, file_info
             )
-            return {
-                "status": "skipped",
-                "reason": skip_reason,
-                "file_path": str(normalized_path),
-            }
         except OSError as exc:
             if getattr(exc, "winerror", None) == 183:
-                if file_path.exists():
-                    file_path.unlink()
-                skip_reason = f"Normalized file already exists: {normalized_path}"
-                self.logger.info(
-                    f"[SKIP] Skipped: {request.filename} {file_info} - {skip_reason}"
+                return await self._resolve_normalization_collision(
+                    file_path, normalized_path, request, file_info
                 )
-                return {
-                    "status": "skipped",
-                    "reason": skip_reason,
-                    "file_path": str(normalized_path),
-                }
             raise
 
         self.logger.info(f"[RENAME] '{original_name}' -> '{normalized_name}'")
         return {"status": "success", "file_path": normalized_path}
 
-    def _predict_final_path(self, file_path: Path) -> Path:
+    async def _resolve_normalization_collision(
+        self, file_path: Path, normalized_path: Path,
+        request: DownloadRequest, file_info: str,
+    ) -> Dict[str, Any]:
+        try:
+            identical = await asyncio.to_thread(self._files_are_identical, file_path, normalized_path)
+        except OSError as exc:
+            self.logger.warning(f"[RENAME] Cannot compare {normalized_path.name}: {exc}")
+            identical = False
+        if not identical:
+            self.logger.info(
+                f"[RENAME] Keeping {file_path.name}: destination {normalized_path.name} "
+                "is not a verified duplicate"
+            )
+            return {"status": "success", "file_path": file_path}
+
+        file_path.unlink()
+        skip_reason = f"Identical normalized file already exists: {normalized_path}"
+        return {"status": "skipped", "reason": skip_reason, "file_path": str(normalized_path)}
+
+    @staticmethod
+    def _files_are_identical(first: Path, second: Path) -> bool:
+        if first.stat().st_size != second.stat().st_size:
+            return False
+        with first.open("rb") as left, second.open("rb") as right:
+            while True:
+                chunk = left.read(1024 * 1024)
+                if chunk != right.read(1024 * 1024):
+                    return False
+                if not chunk:
+                    return True
+
+    def _predict_final_path(
+        self, file_path: Path, message_id: Optional[int] = None
+    ) -> Path:
         if not self.config.get_normalize_track_names():
             return file_path
 
-        normalized_name = normalize_track_name(file_path.stem)
-        if normalized_name == file_path.stem:
+        result = analyze_track_name(
+            file_path.stem, extension=file_path.suffix, message_id=message_id
+        )
+        if result.changes or result.warnings:
+            self.logger.debug(
+                "Filename analysis for %s: changes=%s warnings=%s",
+                file_path.name, result.changes, result.warnings,
+            )
+        if result.name == file_path.stem:
             return file_path
-        return file_path.with_name(normalized_name + file_path.suffix)
+        return file_path.with_name(result.name + file_path.suffix)
 
     async def _build_existing_file_skip_result(
         self,
