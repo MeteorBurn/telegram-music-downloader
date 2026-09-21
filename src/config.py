@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
+from yaml.nodes import MappingNode
 
 
 class ConfigLoader:
@@ -190,6 +191,47 @@ class ConfigLoader:
             "from": datetime.strptime(date_from, "%Y-%m-%d") if date_from else None,
             "to": datetime.strptime(date_to, "%Y-%m-%d") if date_to else None,
         }
+
+    def update_date_from(self) -> str:
+        completion_date = datetime.now().strftime("%Y-%m-%d")
+        with open(
+            self.base_config_path, "r", encoding="utf-8", newline=""
+        ) as file:
+            config_text = file.read()
+
+        node = yaml.compose(config_text)
+        for key in ("filters", "date", "from"):
+            if not isinstance(node, MappingNode):
+                raise ValueError(
+                    f"Cannot update filters.date.from in {self.base_config_path}"
+                )
+            matching_values = [
+                value_node
+                for key_node, value_node in node.value
+                if key_node.value == key
+            ]
+            if not matching_values:
+                raise ValueError(
+                    f"Cannot update filters.date.from in {self.base_config_path}"
+                )
+            node = matching_values[-1]
+
+        updated_text = (
+            config_text[: node.start_mark.index]
+            + f'"{completion_date}"'
+            + config_text[node.end_mark.index :]
+        )
+        temporary_path = self.base_config_path.with_name(
+            f"{self.base_config_path.name}.tmp"
+        )
+        with open(temporary_path, "w", encoding="utf-8", newline="") as file:
+            file.write(updated_text)
+        temporary_path.replace(self.base_config_path)
+
+        self._config.setdefault("filters", {}).setdefault("date", {})[
+            "from"
+        ] = completion_date
+        return completion_date
 
     def get_log_level(self) -> str:
         return self._config.get("logging", {}).get("level", "INFO")

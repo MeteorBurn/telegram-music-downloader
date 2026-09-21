@@ -218,6 +218,10 @@ class SessionRunner:
                     "total_files_skipped": final_summary["files_skipped"],
                 }
             )
+            completion_date = self.config.update_date_from()
+            self.logger.info(
+                f"[SESSION] Updated filters.date.from to {completion_date} in {self.config.base_config_path}"
+            )
             return session_results
         finally:
             await self.download_coordinator.stop()
