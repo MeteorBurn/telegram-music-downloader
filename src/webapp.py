@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import mimetypes
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
@@ -25,6 +26,12 @@ SSE_PING_SECONDS = 15
 UNSAFE_METHODS = ("POST", "PUT", "DELETE")
 
 UNKNOWN_AUTH = {"state": "unknown", "user": None, "phone_masked": None}
+
+# The Windows registry can map .js to text/plain, which breaks ES module loading.
+mimetypes.add_type("text/javascript", ".js")
+mimetypes.add_type("text/css", ".css")
+mimetypes.add_type("image/svg+xml", ".svg")
+mimetypes.add_type("font/woff2", ".woff2")
 
 
 def error_response(
