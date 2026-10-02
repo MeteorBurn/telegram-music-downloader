@@ -1,7 +1,7 @@
 // Logs: live tail with level filter, text search, pause and follow. The pane owns the scroll.
 
 import { clear, h, icon, setAttr, setText } from "../dom.js";
-import { fmtClock, fmtInt } from "../format.js";
+import { fmtClock, fmtInt, plural } from "../format.js";
 import { LOG_CAP, logState, startLogs, subscribeLogs } from "../logstream.js";
 import { button, eqGlyph, iconButton, keycap } from "../ui.js";
 
@@ -74,11 +74,14 @@ export function mount(root) {
     return { ...level, chip, total };
   });
   const status = h("span", { class: "state-badge", role: "status" });
-  const lineCount = h("span", { class: "logs-count mono num" });
+  const lineCount = h("span", { class: "logs-count mono num", title: `Up to ${fmtInt(LOG_CAP)} lines are kept in the browser` });
   const pauseButton = iconButton({ label: "Pause the live view", iconName: "pause", outlined: true, onClick: togglePause });
   const followButton = iconButton({ label: "Follow new lines", iconName: "arrow-line-down", outlined: true, onClick: () => setFollow(!prefs.follow, true) });
 
   const pane = h("div", { class: "log-pane", role: "log", "aria-live": "off", "aria-label": "Session log", tabindex: "0" });
+  // The tail cursor stays the last child of the pane: it marks where the next live line lands.
+  const cursor = h("div", { class: "log-cursor", "aria-hidden": "true", hidden: true }, eqGlyph(true), h("span", null, "Live tail, new lines appear here"));
+  pane.append(cursor);
   const emptyHost = h("div", { class: "log-empty" });
   const jump = button({ label: "Jump to latest", iconName: "arrow-down", size: "sm", attrs: { hidden: true }, onClick: () => setFollow(true, true) });
   jump.classList.add("jump");
@@ -127,6 +130,18 @@ export function mount(root) {
     pane.scrollTop = pane.scrollHeight;
   }
 
+  // Rendered content, the cursor excluded.
+  const contentCount = () => pane.childElementCount - 1;
+  const shownRows = pane.getElementsByClassName("log-row");
+
+  function renderCursor() {
+    const hidden = paused || logState.status !== "live" || contentCount() === 0;
+    if (hidden === cursor.hidden) return;
+    cursor.hidden = hidden;
+    // The cursor adds a row at the end: keep the tail in view while following.
+    if (prefs.follow) scrollToEnd();
+  }
+
   function renderCounts() {
     const totals = Object.fromEntries(LEVELS.map((level) => [level.key, 0]));
     let lines = 0;
@@ -137,11 +152,13 @@ export function mount(root) {
       if (key in totals) totals[key] += 1;
     }
     for (const item of chips) setText(item.total, fmtInt(totals[item.key]));
-    setText(lineCount, `${fmtInt(lines)} of ${fmtInt(LOG_CAP)} lines`);
+    // Filtered rows against loaded lines; the buffer cap is a tooltip, not part of the count.
+    const shown = shownRows.length;
+    setText(lineCount, shown === lines ? `${fmtInt(lines)} ${plural(lines, "line")}` : `${fmtInt(shown)} shown of ${fmtInt(lines)}`);
   }
 
   function renderEmpty() {
-    const hasRows = pane.childElementCount > 0;
+    const hasRows = contentCount() > 0;
     clear(emptyHost);
     if (hasRows) return;
     const filtered = logState.entries.length > 0;
@@ -166,9 +183,10 @@ export function mount(root) {
     for (const entry of logState.entries) {
       if (matches(entry, needle)) fragment.append(row(entry, needle));
     }
-    pane.replaceChildren(fragment);
+    pane.replaceChildren(fragment, cursor);
     renderCounts();
     renderEmpty();
+    renderCursor();
     if (prefs.follow) scrollToEnd();
   }
 
@@ -178,12 +196,13 @@ export function mount(root) {
     for (const entry of entries) {
       if (matches(entry, needle)) fragment.append(row(entry, needle));
     }
-    const had = pane.childElementCount;
-    pane.append(fragment);
+    const had = contentCount();
+    cursor.before(fragment);
     // The pane never holds more than the cap, whatever the filters show.
-    while (pane.childElementCount > LOG_CAP) pane.firstElementChild.remove();
+    while (contentCount() > LOG_CAP) pane.firstElementChild.remove();
     renderCounts();
-    if (!had || !pane.childElementCount) renderEmpty();
+    if (!had || !contentCount()) renderEmpty();
+    renderCursor();
     if (prefs.follow) scrollToEnd();
   }
 
@@ -198,6 +217,7 @@ export function mount(root) {
     const meta = paused
       ? { tone: "info", label: pausedCount ? `Paused, ${fmtInt(pausedCount)} new` : "Paused", glyph: () => icon("pause-fill") }
       : map[logState.status] ?? map.idle;
+    renderCursor();
     const signature = `${meta.tone}|${meta.label}`;
     if (status.dataset.signature === signature) return;
     status.dataset.signature = signature;

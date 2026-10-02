@@ -19,18 +19,26 @@ export function fmtInt(value) {
   return isNumber(value) ? integer.format(value) : MISSING;
 }
 
-/** Megabytes to a { value, unit } pair, switching to GB above 1024 MB. */
-export function fmtSize(megabytes) {
+/**
+ * Megabytes to a { value, unit } pair: GB above 1024 MB, KB below 0.1 MB. A zero reported
+ * for a non-empty set (the API rounds to 0.1 MB) is shown as "<0.1 MB" when `nonEmpty` is set.
+ */
+export function fmtSize(megabytes, { nonEmpty = false } = {}) {
   if (!isNumber(megabytes)) return { value: MISSING, unit: "MB" };
   if (megabytes >= 1024) {
     const gigabytes = megabytes / 1024;
     return { value: gigabytes.toFixed(gigabytes >= 100 ? 1 : 2), unit: "GB" };
   }
+  if (megabytes > 0 && megabytes < 0.1) {
+    const kilobytes = megabytes * 1024;
+    return { value: kilobytes.toFixed(kilobytes >= 10 ? 0 : 1), unit: "KB" };
+  }
+  if (megabytes === 0 && nonEmpty) return { value: "<0.1", unit: "MB" };
   return { value: megabytes.toFixed(megabytes >= 100 ? 0 : 1), unit: "MB" };
 }
 
-export function fmtSizeText(megabytes) {
-  const { value, unit } = fmtSize(megabytes);
+export function fmtSizeText(megabytes, options) {
+  const { value, unit } = fmtSize(megabytes, options);
   return value === MISSING ? MISSING : `${value} ${unit}`;
 }
 

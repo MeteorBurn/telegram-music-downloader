@@ -133,10 +133,11 @@
 }
 
 /* Display figures: proportional digits for the whole percent, with the decimal and the
-   unit set small beside it so a changing digit never moves the big number. */
+   unit set small on the same baseline so "5.0%" reads as one number and a changing digit
+   never moves the big one (the fraction keeps a fixed-width slot). */
 .deck-numeral {
   display: flex;
-  align-items: flex-start;
+  align-items: baseline;
   color: var(--text-1);
   font-size: var(--fs-hero);
   font-weight: 700;
@@ -149,9 +150,8 @@
 .deck-side {
   display: inline-flex;
   align-items: baseline;
-  margin-block-start: 0.14em;
-  margin-inline-start: 0.14em;
-  font-size: 0.4em;
+  margin-inline-start: 0.1em;
+  font-size: 0.42em;
   letter-spacing: -0.02em;
   line-height: 1;
 }
@@ -273,6 +273,12 @@
   color: var(--tone, var(--text-3));
 }
 
+.chan-order {
+  font: 600 var(--fs-data) / 1 var(--font-mono);
+  font-stretch: 87.5%;
+  font-variant-numeric: tabular-nums;
+}
+
 .chan-main {
   display: grid;
   min-inline-size: 0;
@@ -392,6 +398,15 @@
   color: var(--err);
 }
 
+/* Idle: the primer sits beside the configured channel list as one column of steps. */
+@media (min-width: 1100px) {
+  .dash-cols[data-layout="idle"] .primer {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-4);
+    padding-block: var(--space-4);
+  }
+}
+
 @media (max-width: 1099.98px) {
   .dash-cols {
     grid-template-columns: minmax(0, 1fr);
@@ -473,11 +488,20 @@
 
 /* Library ------------------------------------------------------------------------- */
 
+/* Recent downloads beside the setup card; the channel table runs full width above them. */
 .library-cols {
   display: grid;
   grid-template-columns: minmax(0, 1.75fr) minmax(0, 1fr);
   align-items: start;
   gap: var(--space-4);
+}
+
+@media (min-width: 1100px) {
+  /* The short setup card follows the scroll next to a long list instead of leaving a gap. */
+  .library-cols > .panel:last-child {
+    position: sticky;
+    inset-block-start: var(--space-3);
+  }
 }
 
 .share {
@@ -895,6 +919,19 @@
   font: 400 var(--fs-body) / 1.55 var(--font-sans);
 }
 
+/* Tail cursor: marks where the next live line lands, like a prompt at the end of a tail. */
+.log-cursor {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-4);
+  color: var(--text-3);
+}
+
+.log-cursor .eq {
+  color: var(--accent-text);
+}
+
 .jump {
   position: absolute;
   inset-block-end: var(--space-4);
@@ -1020,9 +1057,8 @@
   gap: var(--space-1) var(--space-3);
 }
 
-.path-row .mono {
+.path-row .path {
   color: var(--text-1);
-  overflow-wrap: anywhere;
 }
 
 .token-list {
@@ -1082,9 +1118,21 @@ button.token:hover {
   gap: var(--space-2);
 }
 
+/* The save bar floats over the form column only, edge to edge with its panels. */
 .page > .savebar {
-  grid-column: 1 / -1;
+  grid-column: 2;
+  inline-size: 100%;
+  margin-inline: 0;
   animation: none;
+}
+
+/* Room under the last row while the bar is open, and focus scrolls land above it. */
+.settings:has(.savebar[data-open]) .settings-form {
+  padding-block-end: calc(var(--control-md) + var(--space-8));
+}
+
+.view:has(.savebar[data-open]) {
+  scroll-padding-block-end: calc(var(--control-md) + var(--space-10));
 }
 
 .stack-control {
@@ -1107,6 +1155,10 @@ button.token:hover {
 @media (max-width: 899.98px) {
   .settings {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .page > .savebar {
+    grid-column: 1;
   }
 
   .settings-index {
@@ -1242,6 +1294,19 @@ button.token:hover {
   display: grid;
   gap: var(--space-4);
   padding: var(--space-5);
+}
+
+/* Signed in: the help notes give way to the session details. */
+.account-details .kv {
+  gap: var(--space-3) var(--space-4);
+}
+
+.account-details .kv dd {
+  text-align: start;
+}
+
+.account-details .panel-note {
+  margin-block-start: var(--space-3);
 }
 
 .note {

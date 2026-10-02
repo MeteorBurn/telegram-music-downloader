@@ -1,7 +1,7 @@
 // Library: registry totals, per-channel table, download setup, recent files, registry cleanup.
 
 import { api } from "../api.js";
-import { fileName, h, icon, setText } from "../dom.js";
+import { fileName, h, icon, pathText, setText } from "../dom.js";
 import { fmtDateTime, fmtDay, fmtInt, fmtRelative, fmtSize, fmtSizeText, MISSING, plural } from "../format.js";
 import { isActive, session } from "../store.js";
 import { button, callout, confirmDialog, empty, linkButton, panel, skeleton, toast, withBusy } from "../ui.js";
@@ -126,6 +126,8 @@ export function mount(root) {
   function channelsPanel(data) {
     const channels = data.channels ?? [];
     const totalSize = data.totals?.total_size_mb || 0;
+    // The API rounds sizes to 0.1 MB; while the total rounds to zero, share by file count.
+    const totalFiles = data.totals?.downloaded || 0;
     if (!channels.length) {
       return panel({
         title: "Channels",
@@ -138,13 +140,13 @@ export function mount(root) {
       });
     }
     const rows = channels.map((channel) => {
-      const share = totalSize > 0 ? channel.total_size_mb / totalSize : 0;
+      const share = totalSize > 0 ? channel.total_size_mb / totalSize : totalFiles > 0 ? channel.downloaded / totalFiles : 0;
       return h(
         "tr",
         null,
         h("td", { "data-span": true }, h("div", { class: "cell-main" }, h("span", { class: "cell-title mono" }, channel.channel_id), h("span", { class: "cell-sub mono", title: channel.folder }, channel.folder))),
         h("td", { class: "col-num", "data-label": "Files" }, fmtInt(channel.downloaded)),
-        h("td", { class: "col-num", "data-label": "Size" }, fmtSizeText(channel.total_size_mb)),
+        h("td", { class: "col-num", "data-label": "Size" }, fmtSizeText(channel.total_size_mb, { nonEmpty: channel.downloaded > 0 })),
         h(
           "td",
           { "data-label": "Share" },
@@ -179,7 +181,7 @@ export function mount(root) {
       body: h(
         "dl",
         { class: "kv" },
-        row("Output folder", h("span", { class: "mono" }, data.output_dir ?? MISSING)),
+        row("Output folder", pathText(data.output_dir ?? MISSING)),
         row("File name", h("span", { class: "mono" }, data.naming_template ?? MISSING)),
         row("Workers", h("span", { class: "num" }, `${fmtInt(data.workers)}, queue of ${fmtInt(data.queue_size)}`)),
         row("Rate limit", h("span", { class: "num" }, `${data.requests_per_second ?? MISSING} requests per second`)),
@@ -206,7 +208,7 @@ export function mount(root) {
         { class: "recent-row" },
         fileName(item.filename),
         h("span", { class: "recent-chan mono" }, item.channel_id),
-        h("span", { class: "recent-size mono num" }, fmtSizeText(item.file_size_mb)),
+        h("span", { class: "recent-size mono num" }, fmtSizeText(item.file_size_mb, { nonEmpty: true })),
         h("span", { class: "recent-date num", title: fmtDateTime(item.download_date) }, fmtRelative(item.download_date)),
       ),
     );
@@ -240,7 +242,8 @@ export function mount(root) {
   function render() {
     if (!stats) return;
     const totals = stats.totals ?? {};
-    const size = fmtSize(totals.total_size_mb);
+    const size = fmtSize(totals.total_size_mb, { nonEmpty: totals.downloaded > 0 });
+    // The channel table runs full width; the recent list and the setup card share a row.
     content.replaceChildren(
       head(),
       h(
@@ -251,8 +254,8 @@ export function mount(root) {
         readout("Channels", "broadcast", fmtInt(totals.channels)),
         readout("Blacklisted", "prohibit", fmtInt(totals.blacklisted)),
       ),
-      h("div", { class: "library-cols" }, channelsPanel(stats), setupPanel(stats)),
-      recentPanel(stats),
+      channelsPanel(stats),
+      h("div", { class: "library-cols" }, recentPanel(stats), setupPanel(stats)),
       maintenance,
     );
     renderCleanupAvailability();

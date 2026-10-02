@@ -2,9 +2,9 @@
 
 import { api } from "../api.js";
 import { h, icon, setAttr, setChildren, setText } from "../dom.js";
-import { fullName, initials } from "../format.js";
-import { applyAuth, auth, refreshAuth } from "../store.js";
-import { button, callout, confirmDialog, empty, iconButton, linkButton, skeleton, withBusy } from "../ui.js";
+import { fullName, initials, MISSING } from "../format.js";
+import { applyAuth, auth, isActive, refreshAuth, session } from "../store.js";
+import { button, callout, confirmDialog, empty, iconButton, linkButton, panel, skeleton, withBusy } from "../ui.js";
 
 const STEPS = ["Phone", "Code", "Password"];
 
@@ -61,13 +61,36 @@ export function mount(root) {
     h("div", { class: "note" }, icon("chat-circle-dots"), h("p", null, h("b", null, "The code arrives in Telegram"), "Telegram sends the login code to devices where you are already signed in.")),
     h("div", { class: "note" }, icon("hard-drive"), h("p", null, h("b", null, "The session stays on this machine"), "It is stored next to the app as telegram.session. Logging out removes it.")),
   );
-  root.append(h("div", { class: "page account" }, card, notes));
+  // Signed in, the sign-in notes give way to what the session is made of.
+  const details = h("aside", { class: "account-details", hidden: true });
+  root.append(h("div", { class: "page account" }, card, notes, details));
 
   let screen = null;
   let credentialsReady = true;
+  let credentials = null;
   let disposed = false;
   let countdown = null;
   let errorHost = h("div");
+  let syncLogout = () => {};
+
+  function renderDetails() {
+    const rows = [
+      ["Stored as", [h("span", { class: "mono" }, "telegram.session"), " next to the app"]],
+      ["API ID", credentials?.apiId ? h("span", { class: "mono num" }, String(credentials.apiId)) : MISSING],
+      ["API hash", credentials?.hashHint ? h("span", { class: "mono" }, credentials.hashHint) : "Not stored"],
+    ];
+    setChildren(
+      details,
+      panel({
+        title: "Session",
+        actions: linkButton({ label: "Settings", href: "#/settings", iconName: "sliders-horizontal", variant: "ghost", size: "sm" }),
+        body: [
+          h("dl", { class: "kv" }, rows.flatMap(([label, value]) => [h("dt", null, label), h("dd", null, value)])),
+          h("p", { class: "panel-note" }, "Download sessions sign in with this file. Logging out deletes it; the API credentials stay in Settings."),
+        ],
+      }),
+    );
+  }
 
   function stopCountdown() {
     clearInterval(countdown);
@@ -280,6 +303,14 @@ export function mount(root) {
   function authorizedScreen(status) {
     const user = status.user ?? {};
     const logout = button({ label: "Log out", iconName: "sign-out", variant: "danger", onClick: onLogout });
+    const busyNote = h("p", { class: "field-help", hidden: true }, "Available once the running session ends.");
+    // Like Cleanup and Settings: the action is unavailable up front while a session runs.
+    syncLogout = () => {
+      const active = isActive(session.get().status);
+      logout.disabled = active;
+      setAttr(logout, "title", active ? "Available once the running session ends" : null);
+      busyNote.hidden = !active;
+    };
     card.replaceChildren(
       h("span", { class: "state-badge", "data-tone": "ok" }, icon("check-circle-fill"), "Signed in"),
       h(
@@ -302,7 +333,9 @@ export function mount(root) {
       h("p", { class: "auth-lead" }, "Sessions download with this account. Log out to remove the stored Telegram session from this machine."),
       errorHost,
       h("div", { class: "auth-actions" }, logout, linkButton({ label: "Open dashboard", href: "#/dashboard", iconName: "arrow-right", variant: "secondary" })),
+      busyNote,
     );
+    syncLogout();
 
     async function onLogout() {
       const confirmed = await confirmDialog({
@@ -348,6 +381,10 @@ export function mount(root) {
     screen = next;
     stopCountdown();
     errorHost = h("div");
+    syncLogout = () => {};
+    notes.hidden = next === "authorized";
+    details.hidden = next !== "authorized";
+    if (next === "authorized") renderDetails();
 
     if (next === "loading") {
       card.replaceChildren(h("div", { class: "skeleton-wrap auth-form", "aria-hidden": "true" }, skeleton("12rem", "1.5rem"), skeleton("70%", "2rem"), skeleton("100%", "2.75rem"), skeleton("8rem", "2.75rem")));
@@ -382,15 +419,19 @@ export function mount(root) {
   }
 
   const unsubscribe = auth.subscribe(render);
+  const unsubscribeSession = session.subscribe(() => syncLogout());
   render(auth.get());
   refreshAuth();
 
   api
     .config()
     .then((data) => {
+      if (disposed) return;
       const telegram = data?.config?.telegram ?? {};
+      credentials = { apiId: telegram.api_id, hashHint: telegram.api_hash_hint };
+      if (screen === "authorized") renderDetails();
       const ready = Boolean(telegram.api_id) && Boolean(telegram.api_hash_set);
-      if (!disposed && ready !== credentialsReady) {
+      if (ready !== credentialsReady) {
         credentialsReady = ready;
         if (screen === "phone") {
           screen = null;
@@ -406,5 +447,6 @@ export function mount(root) {
     disposed = true;
     stopCountdown();
     unsubscribe();
+    unsubscribeSession();
   };
 }

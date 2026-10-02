@@ -133,11 +133,17 @@ Measured contrast: text-1/2/3 on surface-1 = 17.2 / 10.2 / 5.7 (dark), 17.8 / 9.
 ### Rules
 - Two families. Width is the display lever: wide (112-118) for numerals and titles only.
 - Display figures and data figures differ on purpose. The deck numeral uses proportional
-  figures: the whole percent is huge, the decimal and the unit sit small beside it in a
-  fixed-width slot, so a changing digit never moves the big number. Every other number is
-  tabular (`.num`); Mona Sans tabular figures carry a slashed zero, kept as the data look.
+  figures: the whole percent is huge, the decimal and the unit sit small (0.42em) on the
+  same baseline in a fixed-width slot, so "5.0%" reads as one number and a changing digit
+  never moves the big one. Every other number is tabular (`.num`); Mona Sans tabular
+  figures carry a slashed zero, kept as the data look.
 - Body text never below 14px. Icons come in 12, 14, 16, 18, 20 and 22px.
 - Machine data is monospace and truncates in the middle of the row, never wraps a layout.
+  Paths that must wrap (`pathText()`, class `.path`) break only after `/` and `\` through a
+  `<wbr>` per separator; `overflow-wrap: break-word` is the last resort for a single folder
+  name wider than the line. `overflow-wrap: anywhere` is never set on a path.
+- Sizes: MB with one decimal, GB above 1024 MB, KB below 0.1 MB. A total the API has already
+  rounded to 0.0 for a non-empty set renders as `<0.1 MB`, never `0.0 MB`.
 - Micro labels are a readout convention for label-above-value pairs, not section eyebrows.
 
 ## 4. Spacing & Layout
@@ -156,6 +162,15 @@ clamp(12px, 2.2vw, 28px), content max width `--content-max` 1240px, control heig
   nested scrollers.
 - Layout states: `wide` >= 1100px full sidebar (232px); `rail` 768-1099px icon rail (64px);
   `compact` < 768px no sidebar, a floating bottom tab bar, single column everywhere.
+- Dashboard columns (`.dash-cols`, `data-layout`): idle = configured channels in scan order
+  beside the primer as one column of steps; active = worker lanes beside channels; ended =
+  channels beside the last session card. After a stop, the channel remembered as current
+  during the run is listed as partially scanned, not as unreached.
+- Library: the channel table runs full width; recent downloads and the setup card share a
+  row, and the setup card is sticky so a long list never leaves it stranded.
+- Account: the sign-in card beside three help notes; signed in, the notes give way to a
+  compact session panel (session file, API ID, hash hint, Settings link). Log out is disabled
+  with a note while a session runs, like Cleanup and Save.
 - Grids use `repeat(auto-fit, minmax(min(X, 100%), 1fr))`; scrolling children carry
   `min-block-size: 0`; long strings carry `min-inline-size: 0` plus ellipsis or `anywhere`.
 
@@ -171,10 +186,15 @@ The hidden route `#/kit` renders all of them as the primitive showcase.
   the label and width and swaps the icon for a spinner; `aria-busy`. Press scales to 0.98.
 - **Transport button**: pill, radius full, with a nested round icon well (button in button).
   Only Start and Stop use it. Rule: transport keys are round, every other control is radius sm.
+  Stop shows `aria-busy` (spinner in the well, label "Stopping") while the stop completes;
+  it is never disabled, so focus stays on it. When the deck swaps Start for Stop or back,
+  focus moves to the new transport if the old one had it.
 - **Icon button**: square 36 or 28, always has `aria-label`.
-- **Field**: label above, control, help below, error below with icon and `aria-describedby`;
-  invalid sets `aria-invalid`. Inputs are surface-2 wells with line-strong edge, unit suffix
-  slot, 36px high. No placeholder-as-label.
+- **Field**: label above, control, help below, error below with icon; `aria-describedby`
+  names the help and, while shown, the error element; invalid sets `aria-invalid`. Numeric
+  and range fields are checked on input (once they differ from the saved value) and on blur,
+  not only on save. Inputs are surface-2 wells with line-strong edge, unit suffix slot, 36px
+  high. No placeholder-as-label.
 - **Switch**: `button[role=switch]`, 40x24 track, heavy spring thumb, accent-solid when on.
 - **Checkbox**: native input restyled, 18px box, check glyph, accent-solid when checked.
 - **Segmented**: radio group in a surface-inset well; the selected segment lifts one notch.
@@ -197,16 +217,24 @@ The hidden route `#/kit` renders all of them as the primitive showcase.
   One hairline between rows, no zebra, numeric columns right-aligned and tabular.
 - **Callout**: soft status fill + icon + text + optional action. No side stripe.
 - **Toast**: surface-4 card, icon, title, message, dismiss. `role="status"` or `alert`.
-- **Dialog**: native `<dialog>`, radius xl, scrim. Buttons name the outcome; focus lands on
-  the dialog itself so Enter never fires a default.
+- **Dialog**: native `<dialog>`, radius xl, scrim. Buttons name the outcome; initial focus
+  lands on the safe (cancel) button so Enter never fires the destructive outcome, Escape
+  cancels, and focus returns to the opener on close.
 - **Skeleton**: surface-2 blocks shaped like the final layout; shown only after 300 ms.
 - **Empty state**: icon well, one line title, one line of how to fill it, optional action.
 - **Log row**: time, level, message with leading marker tags; WARNING and ERROR rows get a
-  status wash across the whole row.
+  status wash across the whole row. The pane ends with a tail cursor (EQ glyph + "Live tail")
+  while live and non-empty; it hides when paused, offline or empty. The toolbar count reads
+  "N lines", or "N shown of M" while filters hide rows; the buffer cap is a tooltip only.
 - **Stepper**: numbered steps with done / current / upcoming states for the sign-in flow.
 - **Setting row**: label + description left, control right; stacks on compact. Grouped in a
   panel with hairlines between rows.
-- **Save bar**: sticky bar that rises when the form is dirty: change count, Reset, Save.
+- **Save bar**: sticky bar that rises when the form is dirty: change count, Reset, Save. It
+  spans the form column (not the index). While open, the form gets bottom padding and the
+  scroller `scroll-padding-block-end`, so a focused row is never left under the bar.
+- **Last session card**: times, file limit, effective workers (override, else the count seen
+  while running, else the configured value, with "(configured)") and scan results. Counts,
+  rates and "not processed" live only in the readout strip above it.
 - **Dock**: slim session transport shown on every view except the dashboard while a session
   is active: state, percent, progress line, counts, Stop.
 
@@ -246,7 +274,9 @@ Mechanisms:
 Rules: motion animates only `transform`, `opacity` and `filter` (plus `clip-path` inside the
 theme view transition); colors and backgrounds may cross-fade over `--dur-1` or `--dur-2`;
 layout properties never animate. No scroll listeners on `window`: section spying uses
-`IntersectionObserver`, and the log pane listens to its own scroll only to hold the tail.
+`IntersectionObserver` on a reading line 40% down the scroller (the last section once the
+end sentinel is in view; an index click pins its section until the next scroll), and the
+log pane listens to its own scroll only to hold the tail.
 Every animation has a `prefers-reduced-motion` path that reduces to opacity or nothing
 (verified: zero running animations on the live dashboard under reduced motion).
 

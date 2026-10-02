@@ -1,7 +1,7 @@
 // Settings: a form over GET/PUT /api/config with dirty tracking, inline validation and a save bar.
 
 import { api } from "../api.js";
-import { h, icon, setAttr, setText } from "../dom.js";
+import { h, icon, pathText, setAttr, setText } from "../dom.js";
 import { plural } from "../format.js";
 import { isActive, session } from "../store.js";
 import { button, callout, iconButton, keycap, segmented, skeleton, switchControl, toast, uid, withBusy } from "../ui.js";
@@ -109,6 +109,12 @@ const LABELS = {
 };
 const PATHS = Object.keys(LABELS);
 const fieldPaths = (field) => field.paths ?? [field.path];
+// The server writes this key to the base config; everything else goes to local_config.yaml.
+const BASE_FILE_PATHS = new Set(["filters.date.from"]);
+// Kinds checked while editing, not only on save.
+const LIVE_KINDS = new Set(["number", "range", "dates"]);
+// After an index click, observer updates within this window are the scroll settling.
+const PIN_SETTLE_MS = 400;
 
 // Form state lives at module level so edits survive a trip to another view.
 const form = { loaded: false, meta: null, initial: {}, values: {}, errors: {}, rowErrors: {}, general: [] };
@@ -167,44 +173,56 @@ function numberProblem(value, field) {
   return null;
 }
 
-/** Client-side checks for edited fields only; the server stays the authority. */
+/** Client-side checks for one field; the server stays the authority. */
+function fieldProblems(field, { partial = false } = {}) {
+  const errors = {};
+  const rowErrors = {};
+  const paths = fieldPaths(field);
+  const value = form.values[paths[0]];
+  if (field.kind === "number") {
+    // A box emptied while typing is reported on blur and save, not on every keystroke.
+    if (partial && value === "") return { errors, rowErrors };
+    const problem = numberProblem(value, field);
+    if (problem) errors[field.path] = [problem];
+  } else if (field.required && !String(value ?? "").trim()) {
+    errors[field.path] = ["This field cannot be empty."];
+  } else if (field.kind === "channels") {
+    if (!value?.length) errors.channels = ["Add at least one channel."];
+    const seen = new Set();
+    (value ?? []).forEach((item, index) => {
+      const key = String(item).trim();
+      if (seen.has(key)) rowErrors[index] = "Duplicate of an earlier row.";
+      seen.add(key);
+    });
+    if (Object.keys(rowErrors).length) errors.channels = ["Remove the duplicate channels."];
+  } else if ((field.kind === "checks" || field.kind === "tags") && !value?.length) {
+    errors[field.path] = [field.kind === "checks" ? "Select at least one file type." : "Add at least one format."];
+  } else if (field.kind === "range" || field.kind === "dates") {
+    const [low, high] = paths.map((path) => form.values[path]);
+    for (const path of paths) {
+      const item = form.values[path];
+      if (field.kind === "range" && item !== null && (typeof item !== "number" || !Number.isFinite(item) || item < 0)) {
+        errors[path] = ["Enter a number, 0 or greater, or leave it empty."];
+      }
+    }
+    if (!errors[paths[0]] && !errors[paths[1]] && low !== null && high !== null && low > high) {
+      errors[paths[0]] = [field.kind === "dates" ? "The start date is after the end date." : "The minimum is greater than the maximum."];
+    }
+  }
+  return { errors, rowErrors };
+}
+
+/** Checks for edited fields only. */
 function validate(dirty) {
   const errors = {};
   const rowErrors = {};
   const touched = new Set(dirty);
   for (const section of SECTIONS) {
     for (const field of section.fields) {
-      const paths = fieldPaths(field);
-      if (!paths.some((path) => touched.has(path))) continue;
-      const value = form.values[paths[0]];
-      if (field.kind === "number") {
-        const problem = numberProblem(value, field);
-        if (problem) errors[field.path] = [problem];
-      } else if (field.required && !String(value ?? "").trim()) {
-        errors[field.path] = ["This field cannot be empty."];
-      } else if (field.kind === "channels") {
-        if (!value?.length) errors.channels = ["Add at least one channel."];
-        const seen = new Set();
-        (value ?? []).forEach((item, index) => {
-          const key = String(item).trim();
-          if (seen.has(key)) rowErrors[index] = "Duplicate of an earlier row.";
-          seen.add(key);
-        });
-        if (Object.keys(rowErrors).length) errors.channels = ["Remove the duplicate channels."];
-      } else if ((field.kind === "checks" || field.kind === "tags") && !value?.length) {
-        errors[field.path] = [field.kind === "checks" ? "Select at least one file type." : "Add at least one format."];
-      } else if (field.kind === "range" || field.kind === "dates") {
-        const [low, high] = paths.map((path) => form.values[path]);
-        for (const path of paths) {
-          const item = form.values[path];
-          if (field.kind === "range" && item !== null && (typeof item !== "number" || !Number.isFinite(item) || item < 0)) {
-            errors[path] = ["Enter a number, 0 or greater, or leave it empty."];
-          }
-        }
-        if (!errors[paths[0]] && !errors[paths[1]] && low !== null && high !== null && low > high) {
-          errors[paths[0]] = [field.kind === "dates" ? "The start date is after the end date." : "The minimum is greater than the maximum."];
-        }
-      }
+      if (!fieldPaths(field).some((path) => touched.has(path))) continue;
+      const checked = fieldProblems(field);
+      Object.assign(errors, checked.errors);
+      Object.assign(rowErrors, checked.rowErrors);
     }
   }
   return { errors, rowErrors };
@@ -338,8 +356,12 @@ export function mount(root) {
     return changed;
   }
 
-  function edit(paths) {
+  /** Records an edit; numeric and range fields are checked right away once they differ from the saved value. */
+  function edit(paths, field, { partial = false } = {}) {
     clearError(paths);
+    if (field && LIVE_KINDS.has(field.kind) && paths.some((path) => !same(form.values[path], form.initial[path]))) {
+      Object.assign(form.errors, fieldProblems(field, { partial }).errors);
+    }
     sync();
   }
 
@@ -388,8 +410,9 @@ export function mount(root) {
         const { id, input } = textInput(path, { mono: field.mono, numeric, integer: field.integer, describedBy: ids.described });
         input.addEventListener("input", () => {
           form.values[path] = numeric ? parseNumber(input.value, false) : input.value;
-          edit([path]);
+          edit([path], field, { partial: true });
         });
+        if (numeric) input.addEventListener("blur", () => edit([path], field));
         return { el: wrapInput(input, field), labelFor: id, inputs: [input] };
       }
       case "secret": {
@@ -467,8 +490,9 @@ export function mount(root) {
           const { id, input } = textInput(itemPath, { numeric: !isDate, type: isDate ? "date" : "text", placeholder: isDate ? null : "No limit", describedBy: ids.described });
           input.addEventListener("input", () => {
             form.values[itemPath] = isDate ? input.value || null : parseNumber(input.value, true);
-            edit(field.paths);
+            edit(field.paths, field, { partial: true });
           });
+          input.addEventListener("blur", () => edit(field.paths, field));
           return { input, block: h("div", { class: "field" }, h("label", { class: "field-label", htmlFor: id }, caption), wrapInput(input, { suffix: field.suffix })) };
         });
         return { el: h("div", { class: "pair", role: "group", "aria-labelledby": ids.label }, inputs.map((item) => item.block)), inputs: inputs.map((item) => item.input) };
@@ -654,14 +678,18 @@ export function mount(root) {
 
   // Build ---------------------------------------------------------------------------------
   function settingRow(field) {
-    const ids = { label: uid("setting-label"), described: uid("setting-desc") };
+    const ids = { label: uid("setting-label"), described: uid("setting-desc"), error: uid("setting-error") };
     const paths = fieldPaths(field);
     const control = buildControl(field, ids);
     let description = field.desc;
     if (field.kind === "dates") {
-      description = `Only messages in this range are scanned. The start date is stored in the base config (${form.meta.base_path}), and a finished session moves it to its completion date.`;
+      description = [
+        "Only messages in this range are scanned. The start date is stored in the base config (",
+        pathText(form.meta.base_path),
+        "), and a finished session moves it to its completion date.",
+      ];
     }
-    const error = h("p", { class: "setting-error", role: "alert", hidden: true });
+    const error = h("p", { class: "setting-error", id: ids.error, role: "alert", hidden: true });
     const label = control.labelFor
       ? h("label", { class: "setting-label", id: ids.label, htmlFor: control.labelFor }, field.label)
       : h("span", { class: "setting-label", id: ids.label }, field.label);
@@ -672,7 +700,7 @@ export function mount(root) {
       h("div", { class: "setting-control" }, control.el),
       error,
     );
-    return { element, paths, error, control };
+    return { element, paths, error, control, describedBy: description ? ids.described : null, errorId: ids.error };
   }
 
   function build() {
@@ -692,6 +720,20 @@ export function mount(root) {
       );
     });
 
+    // Section spy: the section crossing a reading line 40% down the scroller is current, or
+    // the last one once the end of the form is in view. A click pins its section until the
+    // next scroll moves the line. IntersectionObserver only, no scroll listener.
+    const visible = new Set();
+    let pinned = null;
+    let pinnedAt = 0;
+    function markCurrent() {
+      if (pinned && performance.now() - pinnedAt > PIN_SETTLE_MS) pinned = null;
+      const reading = SECTIONS.find((section) => visible.has(`settings-${section.id}`))?.id ?? null;
+      const current = pinned ?? (visible.has("settings-end") ? SECTIONS[SECTIONS.length - 1].id : reading);
+      if (!current) return;
+      for (const item of indexMarks) setAttr(item.link, "aria-current", item.id === current ? "true" : null);
+    }
+
     const index = h(
       "nav",
       { class: "settings-index", "aria-label": "Settings sections" },
@@ -704,6 +746,9 @@ export function mount(root) {
             type: "button",
             onClick: () => {
               // Scroll and move focus, so the next Tab lands inside the chosen section.
+              pinned = section.id;
+              pinnedAt = performance.now();
+              markCurrent();
               const target = document.getElementById(`settings-${section.id}`);
               target?.scrollIntoView({ block: "start", behavior: "auto" });
               target?.focus({ preventScroll: true });
@@ -723,8 +768,8 @@ export function mount(root) {
       h(
         "div",
         { class: "panel-body paths" },
-        h("p", { class: "path-row" }, h("span", { class: "micro" }, "Saved to"), h("span", { class: "mono" }, form.meta.local_path), !form.meta.local_exists && h("span", { class: "panel-note" }, "created on the first save")),
-        h("p", { class: "path-row" }, h("span", { class: "micro" }, "Base file"), h("span", { class: "mono" }, form.meta.base_path), h("span", { class: "panel-note" }, "only the start date is written here")),
+        h("p", { class: "path-row" }, h("span", { class: "micro" }, "Saved to"), pathText(form.meta.local_path), !form.meta.local_exists && h("span", { class: "panel-note" }, "created on the first save")),
+        h("p", { class: "path-row" }, h("span", { class: "micro" }, "Base file"), pathText(form.meta.base_path), h("span", { class: "panel-note" }, "only the start date is written here")),
       ),
     );
 
@@ -733,35 +778,17 @@ export function mount(root) {
     namingPreview();
     sync();
 
-    // Highlight the section crossing a band near the top of the scroller, or the last one
-    // once the end of the form is in view. IntersectionObserver only, no scroll listener.
-    const visible = new Set();
-    observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) visible.add(entry.target.id);
-          else visible.delete(entry.target.id);
-        }
-        const reading = SECTIONS.find((section) => visible.has(`settings-${section.id}`))?.id ?? null;
-        const current = visible.has("settings-end") ? SECTIONS[SECTIONS.length - 1].id : reading;
-        if (!current) return;
-        for (const item of indexMarks) setAttr(item.link, "aria-current", item.id === current ? "true" : null);
-      },
-      { root, rootMargin: "-12% 0px -70% 0px" },
-    );
+    const track = (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) visible.add(entry.target.id);
+        else visible.delete(entry.target.id);
+      }
+      markCurrent();
+    };
+    observer = new IntersectionObserver(track, { root, rootMargin: "-40% 0px -59% 0px" });
     for (const group of groups) observer.observe(group);
     endObserver?.disconnect();
-    endObserver = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) visible.add("settings-end");
-        else visible.delete("settings-end");
-        const reading = SECTIONS.find((section) => visible.has(`settings-${section.id}`))?.id ?? null;
-        const current = entry.isIntersecting ? SECTIONS[SECTIONS.length - 1].id : reading;
-        if (!current) return;
-        for (const item of indexMarks) setAttr(item.link, "aria-current", item.id === current ? "true" : null);
-      },
-      { root },
-    );
+    endObserver = new IntersectionObserver(track, { root });
     endObserver.observe(end);
   }
 
@@ -778,8 +805,16 @@ export function mount(root) {
       setAttr(row.element, "data-dirty", isDirty);
       row.error.hidden = !messages.length;
       if (messages.length) row.error.replaceChildren(icon("warning-circle"), h("span", null, messages.join(" ")));
-      for (const input of row.control.inputs ?? []) setAttr(input, "aria-invalid", messages.length ? "true" : null);
-      if (row.control.invalidTarget) setAttr(row.control.invalidTarget, "data-invalid", messages.length ? "true" : null);
+      // The visible message is also read with the field: description first, then the error.
+      const describedBy = [row.describedBy, messages.length ? row.errorId : null].filter(Boolean).join(" ") || null;
+      for (const input of row.control.inputs ?? []) {
+        setAttr(input, "aria-invalid", messages.length ? "true" : null);
+        setAttr(input, "aria-describedby", describedBy);
+      }
+      if (row.control.invalidTarget) {
+        setAttr(row.control.invalidTarget, "data-invalid", messages.length ? "true" : null);
+        setAttr(row.control.invalidTarget, "aria-describedby", describedBy);
+      }
       const count = (counts[row.section] = counts[row.section] ?? { dirty: 0, errors: 0 });
       if (isDirty) count.dirty += 1;
       if (messages.length) {
@@ -864,7 +899,11 @@ export function mount(root) {
         adopt(data);
         build();
         root.scrollTop = position;
-        toast({ tone: "ok", title: "Settings saved", message: `Written to ${form.meta.local_path}` });
+        // Name the files that actually changed: the start date lives in the base config.
+        const files = [];
+        if (dirty.some((path) => !BASE_FILE_PATHS.has(path))) files.push(form.meta.local_path);
+        if (dirty.some((path) => BASE_FILE_PATHS.has(path))) files.push(form.meta.base_path);
+        toast({ tone: "ok", title: "Settings saved", message: ["Written to ", files.flatMap((file, index) => [index ? " and " : "", pathText(file)])] });
       } catch (error) {
         if (error.status === 400 && error.details.length) applyServerDetails(error.details);
         else if (error.status === 409) form.general = ["A download session is running. Settings can be saved once it ends."];

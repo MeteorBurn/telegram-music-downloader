@@ -87,6 +87,23 @@ export function fileName(name, tailLength = 12) {
   );
 }
 
+/**
+ * A file system path that wraps only after its separators: a <wbr> follows every "/" and
+ * "\", so a line never breaks inside a folder name unless that name alone exceeds the line.
+ */
+export function pathText(path, cls = "path mono") {
+  const text = String(path ?? "");
+  const element = h("span", { class: cls });
+  let start = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] !== "/" && text[index] !== "\\") continue;
+    element.append(text.slice(start, index + 1), h("wbr"));
+    start = index + 1;
+  }
+  if (start < text.length) element.append(text.slice(start));
+  return element;
+}
+
 export function prefersReducedMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }

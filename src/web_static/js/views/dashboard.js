@@ -149,6 +149,16 @@ const PRIMER = [
 
 export function mount(root) {
   const page = h("div", { class: "page dash" });
+  let disposed = false;
+
+  // The status drops these once a session ends: the channel being read when the stop or
+  // failure arrived, and the worker count the coordinator actually used. Both are tied to
+  // started_at so they never describe another session.
+  let lastScan = { startedAt: null, channel: null };
+  let seenWorkers = { startedAt: null, value: null };
+  // Configured channels and worker count (GET /api/config): the idle list and the fallback
+  // when a session used the configured worker count.
+  let configured = null;
 
   // Deck
   const badge = stateBadge("idle");
@@ -199,8 +209,6 @@ export function mount(root) {
   const summaryBody = h("div");
   const summaryPanel = panel({ title: "Last session", body: summaryBody });
 
-  const columns = h("div", { class: "dash-cols" }, lanesPanel, channelsPanel, summaryPanel);
-
   const primer = h(
     "section",
     { class: "panel", "aria-label": "How a session runs" },
@@ -212,6 +220,9 @@ export function mount(root) {
       ),
     ),
   );
+
+  // Idle: channels + primer. Active: lanes + channels. Ended: channels + last session.
+  const columns = h("div", { class: "dash-cols" }, lanesPanel, channelsPanel, summaryPanel, primer);
 
   const loading = h(
     "div",
@@ -233,8 +244,23 @@ export function mount(root) {
     h("p", { class: "sr-only", id: "start-help" }, "Leave both fields empty to use the configured file limit and worker count. Workers accepts 1 to 20."),
   );
   const optionsLine = h("div", { class: "deck-options" });
-  const stopButton = transport({ kind: "stop", label: "Stop session", onClick: () => requestStop() });
+  const stopButton = transport({
+    kind: "stop",
+    label: "Stop session",
+    onClick: () => {
+      if (stopButton.getAttribute("aria-busy") !== "true") requestStop();
+    },
+  });
   let controlsMode = null;
+
+  /** Override from the start form, else the count seen while running, else the configured one. */
+  function effectiveWorkers(status) {
+    const progress = runningProgress(status);
+    if (progress?.total_workers) seenWorkers = { startedAt: status.started_at, value: progress.total_workers };
+    if (status.options?.workers) return status.options.workers;
+    if (status.started_at && seenWorkers.startedAt === status.started_at && seenWorkers.value) return seenWorkers.value;
+    return configured?.workers ?? null;
+  }
 
   function showAlert(node) {
     clear(alertHost);
@@ -293,23 +319,26 @@ export function mount(root) {
   function renderControls(status) {
     const mode = isActive(status) ? "stop" : "start";
     if (mode !== controlsMode) {
+      // The transport is replaced here: a keyboard user who activated it keeps their place.
+      const hadFocus = controls.contains(document.activeElement);
       controlsMode = mode;
       clear(controls);
       if (mode === "start") controls.append(startForm);
       else controls.append(optionsLine, stopButton);
+      if (hadFocus) (mode === "start" ? startButton : stopButton).focus({ preventScroll: true });
     }
     if (mode === "stop") {
+      // Busy rather than disabled while the stop completes, so focus stays on the button.
       const stopping = status.state === "stopping";
-      stopButton.disabled = stopping;
+      setAttr(stopButton, "aria-busy", stopping ? "true" : null);
       setText(stopButton.querySelector(".transport-label"), stopping ? "Stopping" : "Stop session");
       const options = status.options ?? {};
-      const progress = runningProgress(status);
-      const workers = options.workers ?? progress?.total_workers ?? "default";
+      const workers = effectiveWorkers(status);
       const limit = options.max_files > 0 ? fmtInt(options.max_files) : "none";
       const signature = `${limit}|${workers}`;
       if (optionsLine.dataset.signature !== signature) {
         optionsLine.dataset.signature = signature;
-        optionsLine.replaceChildren("File limit", keycap(limit), "Workers", keycap(String(workers)));
+        optionsLine.replaceChildren("File limit", keycap(limit), "Workers", keycap(workers === null ? MISSING : fmtInt(workers)));
       }
     }
   }
@@ -528,12 +557,35 @@ export function mount(root) {
 
   function renderChannels(status) {
     const done = status.channels_done ?? [];
-    const current = status.current_channel;
     const active = isActive(status);
-    const remaining = Math.max(0, (status.total_channels ?? 0) - done.length - (current ? 1 : 0));
-    const signature = JSON.stringify([done.map((item) => [item.channel_name, item.files_queued, item.files_found, item.messages_processed]), current, remaining, active, status.state]);
+    if (active && status.current_channel) lastScan = { startedAt: status.started_at, channel: status.current_channel };
+    const current = active ? status.current_channel : null;
+    const finished = new Set(done.map((item) => String(item.channel_name)));
+    // After a stop or failure the status no longer names the channel it was reading; the one
+    // remembered during the run was scanned partially, not skipped.
+    const partial =
+      !active && status.started_at && lastScan.startedAt === status.started_at && lastScan.channel && !finished.has(String(lastScan.channel))
+        ? lastScan.channel
+        : null;
+    const total = status.total_channels ?? 0;
+    const remaining = Math.max(0, total - done.length - (current || partial ? 1 : 0));
+    const idle = !active && !total && status.state === "idle";
+    const signature = JSON.stringify([
+      done.map((item) => [item.channel_name, item.files_queued, item.files_found, item.messages_processed]),
+      current,
+      partial,
+      remaining,
+      active,
+      status.state,
+      idle ? configured?.channels : null,
+    ]);
     if (signature === channelsSignature) return;
     channelsSignature = signature;
+
+    if (idle) {
+      renderConfiguredChannels();
+      return;
+    }
 
     const rows = done.map((item) =>
       h(
@@ -555,20 +607,44 @@ export function mount(root) {
         ),
       );
     }
+    if (partial) {
+      rows.push(
+        h(
+          "div",
+          { class: "chan" },
+          h("span", { class: "chan-glyph", "data-tone": "skip" }, icon("stop-fill", { size: "0.875rem" })),
+          h(
+            "div",
+            { class: "chan-main" },
+            h("span", { class: "chan-title mono" }, partial),
+            h("span", { class: "chan-id" }, "Partially scanned, resumes from its last checkpoint"),
+          ),
+          h("span", { class: "chan-state", "data-tone": "skip" }, status.state === "failed" ? "Interrupted" : "Stopped"),
+        ),
+      );
+    }
     if (remaining > 0) {
       const waiting = active && status.state !== "stopping";
+      // With the interrupted channel known, the rest were never reached; without it (the page
+      // was opened after the run) one of them was partly read, so they are only "unfinished".
+      const reached = Boolean(current || partial);
+      const untouched = status.state === "failed" && !done.length;
+      const title =
+        waiting || reached ? `${remaining} more ${plural(remaining, "channel")}` : `${remaining} ${plural(remaining, "channel")} not ${untouched ? "scanned" : "finished"}`;
+      const detail = waiting
+        ? "Scanned after the current one"
+        : reached
+          ? "Not reached in this session"
+          : untouched
+            ? "The session failed before any channel was fully scanned"
+            : "The session ended before they were fully scanned; each resumes from its checkpoint";
       rows.push(
         h(
           "div",
           { class: "chan" },
           h("span", { class: "chan-glyph", "data-tone": "muted" }, icon(waiting ? "clock" : "prohibit")),
-          h(
-            "div",
-            { class: "chan-main" },
-            h("span", { class: "chan-title" }, `${remaining} more ${plural(remaining, "channel")}`),
-            h("span", { class: "chan-id" }, waiting ? "Scanned after the current one" : "Not reached in this session"),
-          ),
-          h("span", { class: "chan-state", "data-tone": "muted" }, waiting ? "Waiting" : "Skipped"),
+          h("div", { class: "chan-main" }, h("span", { class: "chan-title" }, title), h("span", { class: "chan-id" }, detail)),
+          h("span", { class: "chan-state", "data-tone": "muted" }, waiting ? "Waiting" : reached ? "Skipped" : "Unfinished"),
         ),
       );
     }
@@ -582,6 +658,36 @@ export function mount(root) {
     setText(channelsNote, status.total_channels ? `${done.length} of ${status.total_channels} scanned` : "");
   }
 
+  /** Idle: the configured channels in scan order, so Start has no surprises. */
+  function renderConfiguredChannels() {
+    const channels = configured?.channels ?? [];
+    if (!channels.length) {
+      setText(channelsNote, "");
+      channelsBody.replaceChildren(
+        configured
+          ? empty({
+              iconName: "broadcast",
+              title: "No channels configured",
+              text: "Add the channels to scan in Settings before starting a session.",
+              action: linkButton({ label: "Open Settings", href: "#/settings", iconName: "arrow-right", size: "sm" }),
+            })
+          : empty({ iconName: "broadcast", title: "No channels scanned yet", text: "Channels are scanned one after another once the session connects." }),
+      );
+      return;
+    }
+    channelsBody.replaceChildren(
+      ...channels.map((channel, index) =>
+        h(
+          "div",
+          { class: "chan" },
+          h("span", { class: "chan-glyph chan-order", "data-tone": "muted" }, index + 1),
+          h("div", { class: "chan-main" }, h("span", { class: "chan-title mono" }, channel), h("span", { class: "chan-id" }, "Resumes from its last checkpoint")),
+        ),
+      ),
+    );
+    setText(channelsNote, `${channels.length} ${plural(channels.length, "channel")} in scan order`);
+  }
+
   // Last session ------------------------------------------------------------------------
   let summarySignature = null;
 
@@ -590,25 +696,22 @@ export function mount(root) {
   }
 
   function renderSummary(status) {
-    const summary = status.summary;
     const results = status.results;
-    const signature = JSON.stringify([status.state, status.started_at, status.finished_at, summary, results && { ...results, channels_details: undefined }, status.options]);
+    const workers = effectiveWorkers(status);
+    const signature = JSON.stringify([status.state, status.started_at, status.finished_at, results && { ...results, channels_details: undefined }, status.options, workers]);
     if (signature === summarySignature) return;
     summarySignature = signature;
     const options = status.options ?? {};
+    // Counts and rates live in the readout strip above; this card holds the run's settings.
     const meta = h(
       "p",
       { class: "summary-meta" },
       h("span", null, "Started ", h("b", { class: "num" }, fmtDateTime(status.started_at))),
       h("span", null, "Ended ", h("b", { class: "num" }, fmtDateTime(status.finished_at))),
       h("span", null, "File limit ", h("b", { class: "num" }, options.max_files > 0 ? fmtInt(options.max_files) : "none")),
-      h("span", null, "Workers ", h("b", { class: "num" }, options.workers ?? "default")),
+      h("span", null, "Workers ", h("b", { class: "num" }, workers === null ? MISSING : fmtInt(workers)), options.workers || workers === null ? "" : " (configured)"),
     );
     const items = [];
-    if (summary) {
-      items.push(summaryItem("Queued", fmtInt(summary.files_queued)));
-      items.push(summaryItem("Success rate", fmtDecimal(summary.success_rate), "%"));
-    }
     if (results) {
       items.push(summaryItem("Channels", fmtInt(results.channels_processed)));
       items.push(summaryItem("Files found", fmtInt(results.total_files_found)));
@@ -656,26 +759,38 @@ export function mount(root) {
       layout = next;
       lanesPanel.hidden = next !== "active";
       summaryPanel.hidden = next !== "ended";
-      columns.hidden = next === "idle";
       readouts.el.hidden = next === "idle";
       primer.hidden = next !== "idle";
+      setAttr(columns, "data-layout", next);
       if (firstPaint) {
-        page.replaceChildren(deck, readouts.el, columns, primer);
+        page.replaceChildren(deck, readouts.el, columns);
         root.replaceChildren(page);
       }
     }
     renderControls(status);
     renderDeck(status);
     renderError(status);
-    if (next !== "idle") {
-      renderReadouts(status);
-      renderChannels(status);
-    }
+    if (next !== "idle") renderReadouts(status);
+    renderChannels(status);
     if (next === "active") renderLanes(status);
     if (next === "ended") renderSummary(status);
   }
 
   const unsubscribe = session.subscribe(render);
   render(session.get());
-  return unsubscribe;
+  api
+    .config()
+    .then((data) => {
+      if (disposed) return;
+      const config = data?.config ?? {};
+      configured = { channels: (config.channels ?? []).map(String), workers: config.download?.concurrent_downloads ?? null };
+      render(session.get());
+    })
+    .catch(() => {
+      // The idle channel list and the worker fallback are context only; the deck works without them.
+    });
+  return () => {
+    disposed = true;
+    unsubscribe();
+  };
 }

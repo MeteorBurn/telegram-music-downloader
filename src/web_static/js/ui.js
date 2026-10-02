@@ -262,8 +262,8 @@ export function toast({ tone = "info", title, message, duration }) {
 // Dialog ------------------------------------------------------------------------
 
 /**
- * Confirmation dialog. Resolves true only when the confirm button is used. Focus lands on
- * the dialog itself, so Enter never triggers either outcome by default.
+ * Confirmation dialog. Resolves true only when the confirm button is used. Initial focus
+ * lands on the safe (cancel) button, so Enter never triggers the destructive outcome.
  */
 export function confirmDialog({ title, body, confirmLabel, cancelLabel = "Cancel", tone = "err", iconName = "warning", confirmVariant = "danger" }) {
   return new Promise((resolve) => {
@@ -285,6 +285,7 @@ export function confirmDialog({ title, body, confirmLabel, cancelLabel = "Cancel
     };
 
     const paragraphs = Array.isArray(body) ? body : [body];
+    const cancelButton = button({ label: cancelLabel, variant: "secondary", onClick: () => close(false) });
     const panelElement = h(
       "div",
       { class: "dialog-panel", tabindex: "-1" },
@@ -294,7 +295,7 @@ export function confirmDialog({ title, body, confirmLabel, cancelLabel = "Cancel
       h(
         "div",
         { class: "dialog-actions" },
-        button({ label: cancelLabel, variant: "secondary", onClick: () => close(false) }),
+        cancelButton,
         button({ label: confirmLabel, variant: confirmVariant, onClick: () => close(true) }),
       ),
     );
@@ -314,6 +315,6 @@ export function confirmDialog({ title, body, confirmLabel, cancelLabel = "Cancel
 
     document.body.append(dialog);
     dialog.showModal();
-    panelElement.focus();
+    cancelButton.focus();
   });
 }
