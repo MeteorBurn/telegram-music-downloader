@@ -33,6 +33,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--workers", "-w", type=int, help="Override number of concurrent workers"
     )
+    parser.add_argument("--web", action="store_true", help="Run the local web UI")
+    parser.add_argument(
+        "--host", default="127.0.0.1", help="Web UI bind address (with --web)"
+    )
+    parser.add_argument(
+        "--port", type=int, default=8765, help="Web UI port (with --web)"
+    )
     return parser
 
 
@@ -107,15 +114,28 @@ async def run_cli(args) -> None:
             await runner.close()
 
 
-async def main() -> None:
-    parser = build_arg_parser()
-    args = parser.parse_args()
+def run_web_command(args) -> None:
+    if not config_exists(args.config):
+        print(f"Config file not found: {args.config}")
+        print("Create config.yaml with your Telegram credentials and channel list")
+        sys.exit(1)
+
+    from webapp import run_web
+
+    run_web(args.config, args.host, args.port)
+
+
+async def main(args) -> None:
     await run_cli(args)
 
 
 if __name__ == "__main__":
+    cli_args = build_arg_parser().parse_args()
     try:
-        asyncio.run(main())
+        if cli_args.web:
+            run_web_command(cli_args)
+        else:
+            asyncio.run(main(cli_args))
     except KeyboardInterrupt:
         print("\nInterrupted by user. Exiting...")
     except RuntimeError as exc:
