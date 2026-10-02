@@ -126,6 +126,8 @@ class SessionRunner:
         self.download_coordinator = None
         self.download_monitor = None
         self.channel_processor = None
+        self.session_results: Optional[Dict[str, Any]] = None
+        self.current_channel = None
 
     async def initialize_client(self, interactive: bool = True):
         self.logger.info("[INIT] Connecting to Telegram...")
@@ -161,6 +163,7 @@ class SessionRunner:
             "total_messages_processed": 0,
             "channels_details": [],
         }
+        self.session_results = session_results
 
         channels = self.config.get_channels()
         if not channels:
@@ -195,6 +198,7 @@ class SessionRunner:
                 remaining_for_channel = (
                     max_files - files_queued_total if max_files > 0 else 0
                 )
+                self.current_channel = channel_name
                 channel_result = await self.channel_processor.process_channel(
                     channel_name, entity, remaining_for_channel
                 )
@@ -224,58 +228,39 @@ class SessionRunner:
             )
             return session_results
         finally:
+            self.current_channel = None
             await self.download_coordinator.stop()
 
     async def show_statistics(self):
         sep = "-" * 40
         lines = [sep, "[STATS] Download Statistics", sep]
-        discovered_trackers = self.tracker_manager.load_existing_trackers()
+        statistics = collect_statistics(
+            self.config, self.tracker_manager, self.media_filter, self.downloader
+        )
 
-        if discovered_trackers:
+        if statistics["channels"]:
             lines.append("Per-Channel Statistics:")
-            total_downloaded = 0
-            total_blacklisted = 0
-            for tracker_entry in discovered_trackers:
-                channel_id = tracker_entry["channel_id"]
-                file_tracker = tracker_entry["file_tracker"]
-                message_tracker = tracker_entry["message_tracker"]
-                file_stats = (
-                    file_tracker.get_statistics()
-                    if file_tracker
-                    else {"total_downloaded_files": 0, "total_blacklisted_files": 0}
-                )
-                last_safe_message_id = (
-                    message_tracker.get_last_processed_id() if message_tracker else None
-                )
-                total_downloaded += file_stats["total_downloaded_files"]
-                total_blacklisted += file_stats["total_blacklisted_files"]
+            for channel in statistics["channels"]:
                 lines.append(
-                    f"  {channel_id}: {file_stats['total_downloaded_files']} downloaded, {file_stats['total_blacklisted_files']} blacklisted, last message: {last_safe_message_id}"
+                    f"  {channel['channel_id']}: {channel['downloaded']} downloaded, {channel['blacklisted']} blacklisted, last message: {channel['last_safe_message_id']}"
                 )
             lines.append(
-                f"Total downloaded: {total_downloaded} files across all channels"
+                f"Total downloaded: {statistics['totals']['downloaded']} files across all channels"
             )
             lines.append(
-                f"Total blacklisted: {total_blacklisted} files across all channels"
+                f"Total blacklisted: {statistics['totals']['blacklisted']} files across all channels"
             )
         else:
             lines.append("No channel state found in output_dir yet")
 
-        download_directory = self.config.get_download_dir()
-        naming_template = self.config.get_naming_template()
-        if self.downloader:
-            download_stats = self.downloader.get_download_statistics()
-            download_directory = download_stats["download_directory"]
-            naming_template = download_stats["naming_template"]
-
         lines.append(sep)
-        lines.append(f"Output dir:  {download_directory}")
-        lines.append(f"Template:    {naming_template}")
-        lines.append(f"Workers:     {self.config.get_concurrent_downloads()}")
-        lines.append(f"Queue size:  {self.config.get_max_queue_size()}")
-        lines.append(f"Rate limit:  {self.config.get_requests_per_second()} req/sec")
+        lines.append(f"Output dir:  {statistics['output_dir']}")
+        lines.append(f"Template:    {statistics['naming_template']}")
+        lines.append(f"Workers:     {statistics['workers']}")
+        lines.append(f"Queue size:  {statistics['queue_size']}")
+        lines.append(f"Rate limit:  {statistics['requests_per_second']} req/sec")
 
-        filter_summary = self.media_filter.get_filter_summary()
+        filter_summary = statistics["filters"]
         lines.append(sep)
         lines.append(f"Types filter:   {filter_summary['file_types']}")
         lines.append(f"Format filter:  {filter_summary['allowed_formats']}")
@@ -295,24 +280,7 @@ class SessionRunner:
         ProgressDisplay.show_progress_once(self.download_coordinator)
 
     async def cleanup_tracker(self) -> int:
-        self.logger.info("[CLEANUP] Cleaning up trackers for all channels...")
-        total_removed = 0
-        discovered_trackers = self.tracker_manager.load_existing_trackers()
-        for tracker_entry in discovered_trackers:
-            channel_id = tracker_entry["channel_id"]
-            file_tracker = tracker_entry["file_tracker"]
-            if not file_tracker:
-                continue
-            removed_count = file_tracker.cleanup_missing_files()
-            if removed_count > 0:
-                self.logger.info(
-                    f"[CLEANUP] Channel {channel_id}: removed {removed_count} missing file entries"
-                )
-                total_removed += removed_count
-        self.logger.info(
-            f"[CLEANUP] Total removed: {total_removed} missing file entries"
-        )
-        return total_removed
+        return cleanup_missing_entries(self.tracker_manager, self.logger)
 
     async def close(self):
         if self.client:
@@ -320,6 +288,109 @@ class SessionRunner:
         self.logger.info("=" * 50)
         self.logger.info("[STOP] Telegram Music Downloader Finished")
         self.logger.info("=" * 50)
+
+
+def collect_statistics(
+    config: ConfigLoader,
+    tracker_manager: TrackerManager,
+    media_filter,
+    downloader=None,
+    recent_limit: int = 50,
+) -> Dict[str, Any]:
+    """Collect persisted per-channel statistics and the active settings."""
+    channels = []
+    recent_files = []
+    total_downloaded = 0
+    total_blacklisted = 0
+    total_size_mb = 0.0
+    for tracker_entry in tracker_manager.load_existing_trackers():
+        channel_id = tracker_entry["channel_id"]
+        file_tracker = tracker_entry["file_tracker"]
+        message_tracker = tracker_entry["message_tracker"]
+        file_stats = (
+            file_tracker.get_statistics()
+            if file_tracker
+            else {"total_downloaded_files": 0, "total_blacklisted_files": 0}
+        )
+        last_safe_message_id = (
+            message_tracker.get_last_processed_id() if message_tracker else None
+        )
+        downloaded_entries = (
+            list(file_tracker.downloaded_files.values()) if file_tracker else []
+        )
+        channel_size_mb = sum(
+            float(entry.get("file_size_mb") or 0) for entry in downloaded_entries
+        )
+        for entry in downloaded_entries:
+            recent_files.append(
+                {
+                    "channel_id": channel_id,
+                    "filename": entry.get("filename"),
+                    "file_size_mb": entry.get("file_size_mb"),
+                    "download_date": entry.get("download_date"),
+                    "message_id": entry.get("message_id"),
+                }
+            )
+
+        total_downloaded += file_stats["total_downloaded_files"]
+        total_blacklisted += file_stats["total_blacklisted_files"]
+        total_size_mb += channel_size_mb
+        channels.append(
+            {
+                "channel_id": channel_id,
+                "folder": tracker_entry["channel_directory"].name,
+                "downloaded": file_stats["total_downloaded_files"],
+                "blacklisted": file_stats["total_blacklisted_files"],
+                "last_safe_message_id": last_safe_message_id,
+                "total_size_mb": round(channel_size_mb, 1),
+            }
+        )
+
+    recent_files.sort(key=lambda item: str(item["download_date"] or ""), reverse=True)
+
+    download_directory = config.get_download_dir()
+    naming_template = config.get_naming_template()
+    if downloader:
+        download_stats = downloader.get_download_statistics()
+        download_directory = download_stats["download_directory"]
+        naming_template = download_stats["naming_template"]
+
+    return {
+        "channels": channels,
+        "totals": {
+            "downloaded": total_downloaded,
+            "blacklisted": total_blacklisted,
+            "channels": len(channels),
+            "total_size_mb": round(total_size_mb, 1),
+        },
+        "recent": recent_files[:recent_limit],
+        "output_dir": download_directory,
+        "naming_template": naming_template,
+        "workers": config.get_concurrent_downloads(),
+        "queue_size": config.get_max_queue_size(),
+        "requests_per_second": config.get_requests_per_second(),
+        "filters": media_filter.get_filter_summary(),
+    }
+
+
+def cleanup_missing_entries(tracker_manager: TrackerManager, logger) -> int:
+    """Remove registry entries whose files are missing; returns the removed count."""
+    logger.info("[CLEANUP] Cleaning up trackers for all channels...")
+    total_removed = 0
+    discovered_trackers = tracker_manager.load_existing_trackers()
+    for tracker_entry in discovered_trackers:
+        channel_id = tracker_entry["channel_id"]
+        file_tracker = tracker_entry["file_tracker"]
+        if not file_tracker:
+            continue
+        removed_count = file_tracker.cleanup_missing_files()
+        if removed_count > 0:
+            logger.info(
+                f"[CLEANUP] Channel {channel_id}: removed {removed_count} missing file entries"
+            )
+            total_removed += removed_count
+    logger.info(f"[CLEANUP] Total removed: {total_removed} missing file entries")
+    return total_removed
 
 
 def config_exists(config_path: str) -> bool:
