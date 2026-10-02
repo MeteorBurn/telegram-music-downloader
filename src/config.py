@@ -194,6 +194,13 @@ class ConfigLoader:
 
     def update_date_from(self) -> str:
         completion_date = datetime.now().strftime("%Y-%m-%d")
+        self.set_date_from(completion_date)
+        return completion_date
+
+    def set_date_from(self, value: Optional[str]) -> None:
+        if value is not None:
+            datetime.strptime(value, "%Y-%m-%d")
+        replacement = f'"{value}"' if value is not None else "null"
         with open(
             self.base_config_path, "r", encoding="utf-8", newline=""
         ) as file:
@@ -218,7 +225,7 @@ class ConfigLoader:
 
         updated_text = (
             config_text[: node.start_mark.index]
-            + f'"{completion_date}"'
+            + replacement
             + config_text[node.end_mark.index :]
         )
         temporary_path = self.base_config_path.with_name(
@@ -230,8 +237,7 @@ class ConfigLoader:
 
         self._config.setdefault("filters", {}).setdefault("date", {})[
             "from"
-        ] = completion_date
-        return completion_date
+        ] = value
 
     def get_log_level(self) -> str:
         return self._config.get("logging", {}).get("level", "INFO")
