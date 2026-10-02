@@ -244,6 +244,9 @@ in place. Set both limits to `0` for an unlimited run.
 | `--stats` | `-s` | Show stored statistics without connecting to Telegram |
 | `--cleanup` | | Remove missing-file records without connecting to Telegram |
 | `--progress` | `-p` | Check in-process progress; a standalone run reports no active session |
+| `--web` | | Start the local web UI instead of a download |
+| `--host HOST` | | Web UI bind address; default: `127.0.0.1` |
+| `--port N` | | Web UI port; default: `8765` |
 | `--help` | `-h` | Show command help |
 
 Use one utility mode at a time. These modes still read your config and write to the
@@ -251,6 +254,49 @@ log. `--progress` cannot connect to a download running in another terminal; use
 `--stats` for saved counts.
 
 </details>
+
+---
+
+## 🖥️ Web UI
+
+Prefer a browser to the terminal? The same downloader ships with a local web UI.
+Its dependencies (`fastapi` and `uvicorn`) are already in `requirements.txt`.
+
+```powershell
+python src/main.py --web
+# Or pick another address or port.
+python src/main.py --web --host 127.0.0.1 --port 9000
+```
+
+Then open **http://127.0.0.1:8765** (or the address printed at startup).
+`--config` works here too.
+
+| View | What it does |
+|---|---|
+| **Dashboard** | Start a session (optional file limit and workers), stop it, and follow live progress and results |
+| **Library** | Stored per-channel counts, sizes, checkpoints and the 50 most recent downloads; run cleanup |
+| **Logs** | Live session log, streamed from the server |
+| **Settings** | Edit credentials, channels, download, naming, filter and logging settings |
+| **Account** | Telegram login status, first-time login and log out |
+
+**First login.** Open **Account**, enter your phone number in international format,
+then the code Telegram sends you, and your 2FA password if asked. The login is saved
+to `telegram.session`, just like a CLI login. A session can't start until the account
+is authorized; the web UI never prompts in the terminal.
+
+**Settings.** Saving writes your changes to `src/local_config.yaml` (beside the selected
+base config), keeping only values that differ from the base. The one exception is
+`filters.date.from`: it's written to the base config, because a completed session
+advances it there. Leave the API hash field empty to keep the current one.
+
+**Sessions.** Only one session runs at a time. While it runs, settings, cleanup and
+login changes are locked. **Stop** cancels it; the next run resumes from the saved
+safe checkpoint, so files that hadn't finished yet are picked up again.
+
+> 🔒 The web UI has **no authentication**. Anyone who can reach it can control the
+> downloader and edit your config. It binds to `127.0.0.1` by default and only accepts
+> loopback host names plus the bound host. Never run it with `--host 0.0.0.0` on a
+> network you don't trust.
 
 ---
 
@@ -440,6 +486,9 @@ account or download from Telegram; duration tests also simulate the probe result
 | `tests/test_runtime.py` | Queueing, downloads, Telegram duration and probe fallback, filename collisions, retries and shutdown |
 | `tests/test_state.py` | Saved state and checkpoint behavior |
 | `tests/test_logging.py` | Shared logging and session output |
+| `tests/test_web_session.py` | Web session lifecycle, stop and statistics |
+| `tests/test_web_config.py` | Settings validation and config file writes |
+| `tests/test_web_auth.py` | Web login flow with a fake Telegram client |
 
 ```powershell
 python -m unittest tests.test_runtime

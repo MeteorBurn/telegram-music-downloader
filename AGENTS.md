@@ -19,6 +19,12 @@ tasks. Runtime state is per-channel JSON. User setup and options are in [README.
 | `src/models.py` | Typed messages, requests, outcomes and persisted-state models; dictionary adapters |
 | `src/state.py` | Atomic JSON writes, scan checkpoints, downloaded-file registry, blacklist and state discovery |
 | `src/logger.py` | Shared logger, rotating file handler, safe console output and transcript helpers |
+| `src/webapp.py` | FastAPI app (`create_app`, `run_web`), `/api/*` routes, error bodies, Host/Content-Type guards, static UI |
+| `src/web_session.py` | `WebSessionManager`: one background `SessionRunner`, start/stop, status, statistics, cleanup |
+| `src/web_logs.py` | `LogBuffer` ring buffer handler with SSE subscriber fan-out; `attach_log_buffer()` |
+| `src/web_config.py` | `WebConfigService`: masked config read, validated partial update, local/base YAML writes |
+| `src/web_auth.py` | `TelegramAuthService`: phone/code/2FA login, cancel, log out, cached status |
+| `src/web_static/` | Vanilla ES module frontend (`index.html`, CSS, JS, fonts); no build step |
 
 Check the responsible implementation and its callers before documenting behavior.
 Defaults in getters can differ from the values supplied by `src/config.yaml`.
@@ -163,6 +169,31 @@ Defaults in getters can differ from the values supplied by `src/config.yaml`.
   expired file reference. Parser errors are logged and end iteration; its
   `RpcMcgetFailError` branch waits 60 seconds and returns.
 
+### Web UI
+
+- `src/main.py --web [--host] [--port]` calls `run_web()` (default `127.0.0.1:8765`).
+  There is no authentication. `TrustedHostMiddleware` allows `127.0.0.1`, `localhost`,
+  `[::1]` plus the bound host when it isn't a wildcard. POST/PUT/DELETE under `/api`
+  require `Content-Type: application/json` (else 415) as the CSRF guard; no CORS.
+- Web sessions call `initialize_client(interactive=False)`; an unauthorized session raises
+  `TelegramNotAuthorizedError` (state `failed`, code `not_authorized`), never `input()`.
+  `/api/session/start` checks auth first and returns 412. Login goes through
+  `TelegramAuthService` only.
+- `WebSessionManager` runs one session at a time. Start, cleanup, config writes and auth
+  changes return 409 while it is `connecting`/`running`/`stopping`. Stop cancels the task;
+  the checkpoint only covers the committed prefix, so the next run resumes from it.
+- `SessionRunner` construction resets logger handlers, so `attach_log_buffer()` must run
+  again after it (and after a failure). Keep `attach_log_buffer()` idempotent.
+- `WebConfigService.update()` validates first, then writes to the sibling
+  `local_config.yaml` only values that differ from the base (equal values are removed).
+  `filters.date.from` is never stored locally: it goes to the base via
+  `ConfigLoader.set_date_from()`, because completed sessions advance it there. Writes are
+  atomic (`.tmp` + `replace`); a reload failure restores both files. The plain
+  `api_hash` is never returned; an empty one keeps the current value.
+- Tests inject fake services/clients and temporary configs; they must never open, copy or
+  delete `<repo>/telegram.session*` or connect to Telegram. `httpx` isn't installed, so
+  don't use `fastapi.testclient`.
+
 ## Logging and progress
 
 - Obtain `telegram_music_downloader` via `get_logger()`; configure handlers centrally.
@@ -188,6 +219,7 @@ Run from the repository root with the existing environment (PowerShell):
 .\venv\Scripts\python.exe -m unittest tests.test_runtime
 .\venv\Scripts\python.exe -m unittest tests.test_state
 .\venv\Scripts\python.exe -m unittest tests.test_logging
+.\venv\Scripts\python.exe -m unittest tests.test_web_session tests.test_web_config tests.test_web_auth
 # Full suite when scope warrants it; do not repeat each module and then the suite.
 .\venv\Scripts\python.exe -m unittest discover -s tests
 .\venv\Scripts\python.exe -m compileall src tests
@@ -200,6 +232,9 @@ git diff --check
 | `tests/test_runtime.py` | Channel queueing/checkpoints, request conversion, metadata duration/fallback, normalization collision and retained paths, download integrity (truncated/interrupted transfers, incomplete-file replacement), retries, shutdown, locator |
 | `tests/test_state.py` | Persisted fields, corrupt-state fallback, safe checkpoint prefix and restart outcomes |
 | `tests/test_logging.py` | Shared handlers, session transcript, concurrent writes, screen-only redraw, component log messages |
+| `tests/test_web_session.py` | Single active session, non-interactive auth failure, stop/cancel, statistics |
+| `tests/test_web_config.py` | Validation errors, local-only diff writes, `filters.date.from` base rule, masked `api_hash` |
+| `tests/test_web_auth.py` | Phone/code/2FA flow and error codes with a fake client |
 
 Choose the smallest relevant check. Documentation-only changes need source/example
 validation, not new tests. Existing tests use temporary state and fake Telegram clients;
