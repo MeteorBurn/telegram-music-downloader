@@ -69,7 +69,10 @@ Defaults in getters can differ from the values supplied by `src/config.yaml`.
 - Session limits count newly queued tasks across all channels, including tasks later
   skipped or failed. The smaller positive config/CLI limit applies; zero adds no limit.
 - Queue identity is `(channel_id, message_id)`; priority starts at message ID.
-  Normal failed downloads allow up to three attempts. Retry accounting must balance
+  Normal failed downloads allow up to three attempts. A retry re-enters the bounded
+  queue through `DownloadQueue.RETRY_ENQUEUE_TIMEOUT`; keep that wait bounded, because
+  an unbounded `put` on a full queue deadlocks every worker against the scanner.
+  Retry accounting must balance
   queue `put`, `task_done` and `join`; retries do not increment the session file count.
 - The shared rate limiter runs before each worker download attempt. It does not limit
   every Telethon request or file-transfer chunk.
@@ -90,7 +93,9 @@ Defaults in getters can differ from the values supplied by `src/config.yaml`.
 - The persisted checkpoint is `last_safe_message_id`, not the last message scanned.
   A normal terminal failure can be passed by the next run; resume is not an automatic
   retry of every unsuccessful download.
-- `downloaded_files` is keyed by file-content MD5 and stores message/path metadata;
+- `downloaded_files` is keyed by file-content MD5, hashed in `asyncio.to_thread` outside
+  the tracker lock so a large file does not stall the other workers, and stores
+  message/path metadata;
   `blacklisted_message_ids` is per-channel. Do not describe it as a global deduplicator.
   Stored `filename`/`file_path` describe the registered file after naming/normalization;
   the original Telegram filename is not stored separately.
@@ -108,12 +113,22 @@ Defaults in getters can differ from the values supplied by `src/config.yaml`.
   Telegram audio duration before queueing. `get_audio_duration_seconds()` accepts
   positive, finite numeric values, excluding booleans. Usable metadata bypasses the
   post-download probe. Missing or invalid duration falls back to `ffprobe` on `PATH`
-  after downloading, before normalization and tracking. Both duration limits unset
-  means no probe. The fallback deletes and skips out-of-range files; probe or deletion
-  errors return `failed`. Existing-file skip paths bypass the fallback.
+  (run through `asyncio.to_thread`) against the `.part` file, before promotion,
+  normalization and tracking. Both duration limits unset means no probe. The fallback
+  deletes and skips out-of-range files; probe or deletion errors return `failed`.
+  Existing-file skip paths bypass the fallback.
+- Transfers are atomic. `_transfer_to_part_file()` downloads into a sibling
+  `<stem>.<message_id><ext>.part`, compares the written size against the Telegram
+  `file_size` and only then does `os.replace()` publish the generated destination.
+  A short transfer returns `failed` (the worker retries); a `finally` removes the
+  scratch file on every failure path, so a partial file never reaches a final path.
+  Keep the promotion atomic and keep the scratch cleanup. No byte-offset resume exists:
+  an interrupted transfer restarts from zero.
 - Before transfer, skip checks use the blacklist, tracked message/path and ordinary
-  generated destination path. Existing files can be registered without re-downloading;
-  existence alone is not a completeness check. No byte-offset resume is implemented here.
+  generated destination path. Existing files can be registered without re-downloading.
+  Both `FileTracker.should_skip_file()` and the destination check treat a file shorter
+  than its recorded/declared `file_size` as incomplete and re-download it; size is the
+  only completeness signal, content is not re-verified.
 - An existing normalized destination alone does not skip a transfer. After downloading,
   normalization collisions compare file sizes and bytes in a worker thread. Only a
   verified identical download is deleted and reported as skipped; different content or
@@ -138,11 +153,15 @@ Defaults in getters can differ from the values supplied by `src/config.yaml`.
   point. `normalize_track_name(str)` remains the context-free string wrapper.
 - Filename template errors fall back to `file_<message_id><extension>`. Audio template
   fields are only provided when Telegram audio metadata is available.
-- Downloader exceptions containing `flood` or `timeout` (case-insensitive text match)
-  add the message to the channel blacklist. A later attempt may therefore be skipped.
-- `TelegramDocumentLocator` reconstructs a `Document` from request fields with `dc_id=1`;
-  it does not fetch a fresh message or refresh an expired file reference. Parser errors
-  are logged and end iteration; its `RpcMcgetFailError` branch waits 60 seconds and returns.
+- Download errors never blacklist a message. Flood/timeout are transient, so they stay
+  retryable; nothing in `src/` writes the blacklist now. `add_blacklisted_file()` /
+  `remove_from_blacklist()` remain the operator-facing API and stored entries are still
+  honored by `should_skip_file()`.
+- `TelegramDocumentLocator` reconstructs a `Document` from request fields, reusing the
+  document's real `dc_id` (`1` only when the field is absent) so downloads do not pay a
+  `FileMigrateError` round trip per file. It does not fetch a fresh message or refresh an
+  expired file reference. Parser errors are logged and end iteration; its
+  `RpcMcgetFailError` branch waits 60 seconds and returns.
 
 ## Logging and progress
 
@@ -178,7 +197,7 @@ git diff --check
 | Tests | Contract focus |
 |---|---|
 | `tests/test_app.py` | Disk-backed stats/cleanup, standalone progress, duration config |
-| `tests/test_runtime.py` | Channel queueing/checkpoints, request conversion, metadata duration/fallback, normalization collision and retained paths, retries, shutdown, locator |
+| `tests/test_runtime.py` | Channel queueing/checkpoints, request conversion, metadata duration/fallback, normalization collision and retained paths, download integrity (truncated/interrupted transfers, incomplete-file replacement), retries, shutdown, locator |
 | `tests/test_state.py` | Persisted fields, corrupt-state fallback, safe checkpoint prefix and restart outcomes |
 | `tests/test_logging.py` | Shared handlers, session transcript, concurrent writes, screen-only redraw, component log messages |
 

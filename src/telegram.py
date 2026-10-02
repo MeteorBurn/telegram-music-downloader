@@ -289,6 +289,7 @@ class MessageParser:
             "document_id": document.id,
             "access_hash": document.access_hash,
             "file_reference": document.file_reference,
+            "dc_id": getattr(document, "dc_id", None),
         }
 
     def _get_extension_from_mime(self, mime_type: str) -> str:
@@ -361,7 +362,7 @@ class TelegramDocumentLocator:
             access_hash=request.access_hash,
             file_reference=request.file_reference,
             size=request.file_size,
-            dc_id=1,
+            dc_id=request.dc_id or 1,
             mime_type=request.mime_type,
             attributes=[],
             date=None,

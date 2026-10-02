@@ -1,4 +1,5 @@
 import asyncio
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional
@@ -36,6 +37,8 @@ class DownloadTask:
 
 
 class DownloadQueue:
+    RETRY_ENQUEUE_TIMEOUT = 30.0
+
     def __init__(self, max_size: int = 100):
         self.max_size = max_size
         self._queue = asyncio.PriorityQueue(maxsize=max_size)
@@ -56,7 +59,12 @@ class DownloadQueue:
             "current_size": 0,
         }
 
-    async def put(self, task: DownloadTask, is_retry: bool = False) -> bool:
+    async def put(
+        self,
+        task: DownloadTask,
+        is_retry: bool = False,
+        timeout: Optional[float] = None,
+    ) -> bool:
         try:
             task_id = self._generate_task_id(task.media_info)
             if not is_retry and (
@@ -70,7 +78,10 @@ class DownloadQueue:
             if not is_retry:
                 task.priority = task.media_info.get("message_id", 0)
 
-            await self._queue.put(task)
+            if timeout is None:
+                await self._queue.put(task)
+            else:
+                await asyncio.wait_for(self._queue.put(task), timeout=timeout)
             if not is_retry:
                 self._pending_tasks[task_id] = task
                 self._stats["total_added"] += 1
@@ -81,6 +92,11 @@ class DownloadQueue:
             return True
         except asyncio.QueueFull:
             self.logger.warning("Download queue is full, cannot add more tasks")
+            return False
+        except asyncio.TimeoutError:
+            self.logger.warning(
+                f"Download queue stayed full for {timeout}s, cannot add more tasks"
+            )
             return False
         except Exception as exc:
             self.logger.error(f"Error adding task to queue: {exc}")
@@ -157,7 +173,9 @@ class DownloadQueue:
             return False
 
         task.priority += 1000
-        success = await self.put(task, is_retry=True)
+        success = await self.put(
+            task, is_retry=True, timeout=self.RETRY_ENQUEUE_TIMEOUT
+        )
         if success:
             self._queue.task_done()
             self._stats["total_retried"] += 1
@@ -261,13 +279,13 @@ class RateLimiter:
         self.requests_per_second = requests_per_second
         self.burst_size = burst_size
         self.tokens = burst_size
-        self.last_update = asyncio.get_event_loop().time()
+        self.last_update = time.monotonic()
         self._lock = asyncio.Lock()
         self.logger = get_logger()
 
     async def acquire(self, worker_id: str = "unknown"):
         async with self._lock:
-            now = asyncio.get_event_loop().time()
+            now = time.monotonic()
             time_passed = now - self.last_update
             self.tokens = min(
                 self.burst_size, self.tokens + time_passed * self.requests_per_second
@@ -287,7 +305,7 @@ class RateLimiter:
             )
             await asyncio.sleep(wait_time)
             self.tokens = 0
-            self.last_update = asyncio.get_event_loop().time()
+            self.last_update = time.monotonic()
 
 
 class DownloadWorker:

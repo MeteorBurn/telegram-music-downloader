@@ -1,4 +1,5 @@
 import asyncio
+import os
 import shutil
 import subprocess
 from datetime import datetime
@@ -9,6 +10,11 @@ from logger import get_logger
 from models import DownloadOutcome, DownloadRequest, get_audio_duration_seconds
 from renamer import analyze_track_name
 from telegram import create_telegram_locator
+
+
+PART_SUFFIX = ".part"
+MAX_PART_STEM_LENGTH = 100
+MAX_PART_EXTENSION_LENGTH = 20
 
 
 class TelegramDownloader:
@@ -53,12 +59,17 @@ class TelegramDownloader:
             predicted_final_path = self._predict_final_path(file_path, request.message_id)
 
             if file_path.exists():
-                return await self._build_existing_file_skip_result(
-                    request,
-                    file_info,
-                    file_tracker,
-                    file_path,
-                    "File with same name already exists",
+                incomplete = self._describe_incomplete_file(file_path, request.file_size)
+                if incomplete is None:
+                    return await self._build_existing_file_skip_result(
+                        request,
+                        file_info,
+                        file_tracker,
+                        file_path,
+                        "File with same name already exists",
+                    )
+                self.logger.warning(
+                    f"[WARN] Replacing incomplete file {file_path.name}: {incomplete}"
                 )
 
             message = await self._get_message_by_id(request)
@@ -73,70 +84,57 @@ class TelegramDownloader:
                     logged=True,
                 ).to_dict()
 
-            downloaded_file = await self.client.download_media(
-                message.media.document, file=str(file_path)
-            )
+            part_path = self._build_part_path(file_path, request.message_id)
+            try:
+                transfer_failure = await self._transfer_to_part_file(
+                    message, part_path, request, filename, file_info, file_path.name
+                )
+                if transfer_failure:
+                    return transfer_failure.to_dict()
+                os.replace(part_path, file_path)
+            finally:
+                self._discard_part_file(part_path)
 
-            if downloaded_file:
-                if get_audio_duration_seconds(request.audio_meta) is None:
-                    duration_outcome = self._validate_downloaded_duration(file_path)
-                    if duration_outcome:
-                        return duration_outcome.to_dict()
+            request.extra_fields["download_date"] = datetime.now()
+            file_hash = None
 
-                request.extra_fields["download_date"] = datetime.now()
-                file_hash = None
-
-                if self.config.get_normalize_track_names():
-                    normalization_result = await self._apply_normalized_filename(
-                        file_path, predicted_final_path, request, file_info
+            if self.config.get_normalize_track_names():
+                normalization_result = await self._apply_normalized_filename(
+                    file_path, predicted_final_path, request, file_info
+                )
+                if normalization_result["status"] == "skipped":
+                    return await self._build_existing_file_skip_result(
+                        request, file_info, file_tracker,
+                        Path(normalization_result["file_path"]),
+                        "Identical normalized file already exists",
                     )
-                    if normalization_result["status"] == "skipped":
-                        return await self._build_existing_file_skip_result(
-                            request, file_info, file_tracker,
-                            Path(normalization_result["file_path"]),
-                            "Identical normalized file already exists",
-                        )
-                    file_path = normalization_result["file_path"]
+                file_path = normalization_result["file_path"]
 
-                if file_tracker:
-                    file_hash = await file_tracker.track_downloaded_file(
-                        request, str(file_path)
-                    )
-                    message_date = self._build_message_date_suffix(request.publish_date)
-                    self.logger.info(
-                        f"[OK] Downloaded: {file_path.name} {file_info}{message_date} (hash: {file_hash[:8]}...)"
-                    )
-                else:
-                    message_date = self._build_message_date_suffix(request.publish_date)
-                    self.logger.info(
-                        f"[OK] Downloaded: {file_path.name} {file_info}{message_date}"
-                    )
+            if file_tracker:
+                file_hash = await file_tracker.track_downloaded_file(
+                    request, str(file_path)
+                )
+                message_date = self._build_message_date_suffix(request.publish_date)
+                self.logger.info(
+                    f"[OK] Downloaded: {file_path.name} {file_info}{message_date} (hash: {file_hash[:8]}...)"
+                )
+            else:
+                message_date = self._build_message_date_suffix(request.publish_date)
+                self.logger.info(
+                    f"[OK] Downloaded: {file_path.name} {file_info}{message_date}"
+                )
 
-                return DownloadOutcome(
-                    status="success",
-                    file_path=str(file_path),
-                    file_hash=file_hash,
-                    already_existed=False,
-                    logged=True,
-                ).to_dict()
-
-            self.logger.error(f"[FAIL] Download returned None: {filename} {file_info}")
             return DownloadOutcome(
-                status="failed",
-                reason="Download returned None",
-                file_path=None,
+                status="success",
+                file_path=str(file_path),
+                file_hash=file_hash,
+                already_existed=False,
                 logged=True,
             ).to_dict()
         except Exception as exc:
             self.logger.error(
                 f"[FAIL] Download error: {request.filename} {file_info} - {exc}"
             )
-            if file_tracker and (
-                "flood" in str(exc).lower() or "timeout" in str(exc).lower()
-            ):
-                file_tracker.add_blacklisted_file(
-                    request.message_id, f"Download error: {str(exc)[:100]}"
-                )
             return DownloadOutcome(
                 status="failed",
                 reason=str(exc),
@@ -144,8 +142,70 @@ class TelegramDownloader:
                 logged=True,
             ).to_dict()
 
-    def _validate_downloaded_duration(
-        self, file_path: Path
+    async def _transfer_to_part_file(
+        self,
+        message: Any,
+        part_path: Path,
+        request: DownloadRequest,
+        filename: str,
+        file_info: str,
+        display_name: str,
+    ) -> Optional[DownloadOutcome]:
+        """Download into a scratch file. Returns a failure outcome, or None when complete."""
+        self._discard_part_file(part_path)
+        downloaded_file = await self.client.download_media(
+            message.media.document, file=str(part_path)
+        )
+
+        if not downloaded_file:
+            self.logger.error(f"[FAIL] Download returned None: {filename} {file_info}")
+            return DownloadOutcome(
+                status="failed", reason="Download returned None", logged=True
+            )
+
+        incomplete = self._describe_incomplete_file(part_path, request.file_size)
+        if incomplete:
+            reason = f"Incomplete download: {incomplete}"
+            self.logger.error(f"[FAIL] {reason}: {filename} {file_info}")
+            return DownloadOutcome(status="failed", reason=reason, logged=True)
+
+        if get_audio_duration_seconds(request.audio_meta) is None:
+            return await self._validate_downloaded_duration(part_path, display_name)
+        return None
+
+    @staticmethod
+    def _build_part_path(file_path: Path, message_id: Optional[int]) -> Path:
+        """Bound every part so the scratch name fits a 255-character path component."""
+        stem = file_path.stem[:MAX_PART_STEM_LENGTH]
+        extension = file_path.suffix[:MAX_PART_EXTENSION_LENGTH]
+        return file_path.with_name(f"{stem}.{message_id}{extension}{PART_SUFFIX}")
+
+    def _discard_part_file(self, part_path: Path) -> None:
+        try:
+            part_path.unlink(missing_ok=True)
+        except OSError as exc:
+            self.logger.warning(
+                f"[WARN] Could not remove partial file {part_path.name}: {exc}"
+            )
+
+    def _describe_incomplete_file(
+        self, file_path: Path, expected_size: int
+    ) -> Optional[str]:
+        """Describe a truncated file, or None when it holds every expected byte."""
+        if not isinstance(expected_size, int) or expected_size <= 0:
+            return None
+
+        try:
+            actual_size = file_path.stat().st_size
+        except OSError:
+            return None
+
+        if actual_size >= expected_size:
+            return None
+        return f"{actual_size} of {expected_size} bytes"
+
+    async def _validate_downloaded_duration(
+        self, file_path: Path, display_name: str
     ) -> Optional[DownloadOutcome]:
         duration_filter = self.config.get_duration_filter()
         min_sec = duration_filter.get("min_sec")
@@ -154,41 +214,43 @@ class TelegramDownloader:
             return None
 
         try:
-            duration_sec = self._probe_duration_seconds(file_path)
+            duration_sec = await asyncio.to_thread(
+                self._probe_duration_seconds, file_path
+            )
         except Exception as exc:
             reason = f"Could not determine duration: {exc}"
             cleanup_error = self._delete_duration_rejected_file(file_path)
             if cleanup_error:
                 reason = f"{reason}; {cleanup_error}"
-            self.logger.error(f"[FAIL] {reason}: {file_path.name}")
+            self.logger.error(f"[FAIL] {reason}: {display_name}")
             return DownloadOutcome(status="failed", reason=reason, logged=True)
 
         if min_sec is not None and duration_sec < min_sec:
             reason = f"Duration {duration_sec:.1f} sec is below minimum {min_sec} sec"
             return self._build_duration_filter_outcome(
-                file_path, reason, f"[{min_sec} sec > {duration_sec:.1f} sec]"
+                file_path, display_name, reason, f"[{min_sec} sec > {duration_sec:.1f} sec]"
             )
 
         if max_sec is not None and duration_sec > max_sec:
             reason = f"Duration {duration_sec:.1f} sec exceeds maximum {max_sec} sec"
             return self._build_duration_filter_outcome(
-                file_path, reason, f"[{max_sec} sec < {duration_sec:.1f} sec]"
+                file_path, display_name, reason, f"[{max_sec} sec < {duration_sec:.1f} sec]"
             )
 
         return None
 
     def _build_duration_filter_outcome(
-        self, file_path: Path, reason: str, details: str
+        self, file_path: Path, display_name: str, reason: str, details: str
     ) -> DownloadOutcome:
         cleanup_error = self._delete_duration_rejected_file(file_path)
         if cleanup_error:
             failure_reason = f"{reason}; {cleanup_error}"
-            self.logger.error(f"[FAIL] {failure_reason}: {file_path.name}")
+            self.logger.error(f"[FAIL] {failure_reason}: {display_name}")
             return DownloadOutcome(
                 status="failed", reason=failure_reason, logged=True
             )
 
-        self.logger.info(f"[FILTER] duration: {details} {file_path.name}")
+        self.logger.info(f"[FILTER] duration: {details} {display_name}")
         return DownloadOutcome(status="skipped", reason=reason, logged=True)
 
     def _delete_duration_rejected_file(self, file_path: Path) -> Optional[str]:

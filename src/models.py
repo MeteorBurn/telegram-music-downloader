@@ -35,6 +35,7 @@ class ParsedMessage:
     document_id: Optional[int] = None
     access_hash: Optional[int] = None
     file_reference: Any = None
+    dc_id: Optional[int] = None
     extra_fields: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -56,6 +57,7 @@ class ParsedMessage:
             "document_id",
             "access_hash",
             "file_reference",
+            "dc_id",
         }
         extra_fields = {
             key: value for key, value in payload.items() if key not in known_fields
@@ -73,6 +75,7 @@ class ParsedMessage:
             document_id=payload.get("document_id"),
             access_hash=payload.get("access_hash"),
             file_reference=payload.get("file_reference"),
+            dc_id=payload.get("dc_id"),
             extra_fields=extra_fields,
         )
 
@@ -111,6 +114,7 @@ class ParsedMessage:
                 "document_id": self.document_id,
                 "access_hash": self.access_hash,
                 "file_reference": self.file_reference,
+                "dc_id": self.dc_id,
             }
         )
         return payload
@@ -131,6 +135,7 @@ class DownloadRequest:
     document_id: Optional[int] = None
     access_hash: Optional[int] = None
     file_reference: Any = None
+    dc_id: Optional[int] = None
     outcome_callback: Optional[OutcomeCallback] = None
     extra_fields: Dict[str, Any] = field(default_factory=dict)
 
@@ -157,6 +162,7 @@ class DownloadRequest:
             document_id=parsed.document_id,
             access_hash=parsed.access_hash,
             file_reference=parsed.file_reference,
+            dc_id=parsed.dc_id,
             outcome_callback=outcome_callback,
             extra_fields=dict(parsed.extra_fields),
         )
@@ -177,6 +183,7 @@ class DownloadRequest:
             "document_id": media_info.get("document_id"),
             "access_hash": media_info.get("access_hash"),
             "file_reference": media_info.get("file_reference"),
+            "dc_id": media_info.get("dc_id"),
             "outcome_callback": media_info.get("outcome_callback"),
         }
         extra_fields = {
@@ -198,6 +205,7 @@ class DownloadRequest:
                 "document_id",
                 "access_hash",
                 "file_reference",
+                "dc_id",
                 "outcome_callback",
             }
         }
@@ -228,6 +236,7 @@ class DownloadRequest:
                 "document_id": self.document_id,
                 "access_hash": self.access_hash,
                 "file_reference": self.file_reference,
+                "dc_id": self.dc_id,
                 "outcome_callback": self.outcome_callback,
             }
         )

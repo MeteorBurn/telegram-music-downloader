@@ -164,13 +164,17 @@ class FakeDownloadConfig:
         return {"from": None, "to": None}
 
 
+DOWNLOAD_PAYLOAD = b"downloaded-audio"
+
+
 class FakeDownloadClient:
-    def __init__(self):
+    def __init__(self, payload: bytes = DOWNLOAD_PAYLOAD):
         self.download_calls = 0
+        self.payload = payload
 
     async def download_media(self, _document, file: str):
         self.download_calls += 1
-        Path(file).write_bytes(b"downloaded-audio")
+        Path(file).write_bytes(self.payload)
         return file
 
 
@@ -179,7 +183,7 @@ def build_media_info(message_id: int) -> dict:
         "message_id": message_id,
         "channel_id": "test-channel",
         "filename": f"track_{message_id}.mp3",
-        "file_size": 1024,
+        "file_size": len(DOWNLOAD_PAYLOAD),
         "type": "audio",
         "mime_type": "audio/mpeg",
     }
@@ -717,7 +721,7 @@ class DownloaderNormalizationTests(unittest.IsolatedAsyncioTestCase):
                     "message_id": 123,
                     "channel_id": "test-channel",
                     "filename": "[PROMO] Artist_-_Track_-_Alice_Remix.FLAC.FLAC",
-                    "file_size": 1024,
+                    "file_size": len(DOWNLOAD_PAYLOAD),
                     "type": "audio",
                     "mime_type": "audio/flac",
                     "document_id": 1,
@@ -745,6 +749,101 @@ class DownloaderNormalizationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(kept.read_bytes(), b"downloaded-audio")
             self.assertEqual(final_path.read_bytes(), b"existing-content")
             self.assertEqual(client.download_calls, 2)
+
+
+class DownloadIntegrityTests(unittest.IsolatedAsyncioTestCase):
+    """A file at its final path must always hold every byte Telegram reported."""
+
+    @staticmethod
+    def _build_downloader(client, temp_dir, tracker=None):
+        downloader = TelegramDownloader(
+            client, FakeDownloadConfig(temp_dir, normalize_track_names=False), tracker
+        )
+        downloader._get_message_by_id = lambda _payload: asyncio.sleep(
+            0, result=SimpleNamespace(media=SimpleNamespace(document=object()))
+        )
+        return downloader
+
+    @staticmethod
+    def _leftover_part_files(temp_dir):
+        return sorted(path.name for path in Path(temp_dir).glob("*.part"))
+
+    async def test_truncated_transfer_is_rejected_and_leaves_no_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            client = FakeDownloadClient(payload=DOWNLOAD_PAYLOAD[:5])
+            tracker = FileTracker(
+                str(Path(temp_dir) / "download_state.json"), "test-channel"
+            )
+            downloader = self._build_downloader(client, temp_dir, tracker)
+
+            result = await downloader.download_media_file(build_media_info(200))
+
+            self.assertEqual(result["status"], "failed")
+            self.assertIn("Incomplete download", result["reason"])
+            self.assertIsNone(result["file_path"])
+            self.assertFalse((Path(temp_dir) / "track_200__200.mp3").exists())
+            self.assertEqual(self._leftover_part_files(temp_dir), [])
+            self.assertEqual(tracker.downloaded_files, {})
+
+    async def test_interrupted_transfer_leaves_no_file_at_destination(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            class InterruptingClient:
+                async def download_media(self, _document, file: str):
+                    Path(file).write_bytes(DOWNLOAD_PAYLOAD[:4])
+                    raise ConnectionError("connection reset while downloading")
+
+            downloader = self._build_downloader(InterruptingClient(), temp_dir)
+
+            result = await downloader.download_media_file(build_media_info(201))
+
+            self.assertEqual(result["status"], "failed")
+            self.assertIn("connection reset", result["reason"])
+            self.assertFalse((Path(temp_dir) / "track_201__201.mp3").exists())
+            self.assertEqual(self._leftover_part_files(temp_dir), [])
+
+    async def test_incomplete_file_from_earlier_run_is_replaced(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stale = Path(temp_dir) / "track_202__202.mp3"
+            stale.write_bytes(DOWNLOAD_PAYLOAD[:6])
+            client = FakeDownloadClient()
+            downloader = self._build_downloader(client, temp_dir)
+
+            result = await downloader.download_media_file(build_media_info(202))
+
+            self.assertEqual(result["status"], "success")
+            self.assertEqual(client.download_calls, 1)
+            self.assertEqual(stale.read_bytes(), DOWNLOAD_PAYLOAD)
+            self.assertEqual(self._leftover_part_files(temp_dir), [])
+
+    async def test_complete_file_from_earlier_run_is_still_skipped(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            existing = Path(temp_dir) / "track_203__203.mp3"
+            existing.write_bytes(DOWNLOAD_PAYLOAD)
+            client = FakeDownloadClient()
+            downloader = self._build_downloader(client, temp_dir)
+
+            result = await downloader.download_media_file(build_media_info(203))
+
+            self.assertEqual(result["status"], "skipped")
+            self.assertEqual(client.download_calls, 0)
+
+    async def test_tracked_incomplete_file_is_not_treated_as_downloaded(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tracker = FileTracker(
+                str(Path(temp_dir) / "download_state.json"), "test-channel"
+            )
+            tracked = Path(temp_dir) / "track_204__204.mp3"
+            tracked.write_bytes(DOWNLOAD_PAYLOAD)
+            request = {**build_media_info(204), "download_dir": temp_dir}
+            await tracker.track_downloaded_file(request, str(tracked))
+
+            should_skip, reason = tracker.should_skip_file(request)
+            self.assertTrue(should_skip)
+            self.assertIn("File already downloaded:", reason)
+
+            tracked.write_bytes(DOWNLOAD_PAYLOAD[:3])
+            should_skip, _reason = tracker.should_skip_file(request)
+            self.assertFalse(should_skip)
 
 
 class DownloadQueueTests(unittest.IsolatedAsyncioTestCase):

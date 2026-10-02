@@ -367,10 +367,14 @@ This updates the stored counts; it does not delete music or clear the blacklist.
 
 - Statistics include all channel folders under the output directory, even channels
   removed from your config. They show stored records, not a fresh integrity check.
-- A file that already exists is accepted by its path. Partial files are not resumed
-  or checked for completeness, so an interrupted download may later be skipped.
-- Ordinary download failures allow up to three attempts. Errors mentioning `flood`
-  or `timeout` add the message to that channel's blacklist; later attempts can be skipped.
+- Downloads land in a temporary `.part` file and are only moved to their final name
+  after the transfer matches the size Telegram reported, so an interrupted download
+  never leaves a broken file under a real track name.
+- A file that already exists is accepted by its path unless it is shorter than the
+  expected size, in which case it is downloaded again. Transfers restart from the
+  beginning; there is no partial resume.
+- Ordinary download failures allow up to three attempts. Failures are not blacklisted,
+  so a temporary network or rate-limit error does not lose the track permanently.
 - If a state file cannot be loaded, the app logs an error and starts with empty state.
   It does not make a recovery backup. Inspect the affected JSON before continuing.
 - The current state files use schema version 2. Legacy `message_tracker.json` and

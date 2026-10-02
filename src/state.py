@@ -13,6 +13,8 @@ from models import DownloadRequest, DownloadState, ScanState
 
 T = TypeVar("T")
 
+HASH_CHUNK_SIZE = 1024 * 1024
+
 
 class JsonStateStore(Generic[T]):
     def __init__(self, file_path: str, logger_name: str = __name__):
@@ -214,9 +216,10 @@ class FileTracker:
         self.logger.info(f"[BLACKLIST] Message {message_id} removed from blacklist")
 
     async def track_downloaded_file(self, payload: Any, file_path: str) -> str:
+        request = DownloadRequest.from_payload(payload)
+        file_hash = await asyncio.to_thread(self._calculate_file_hash, file_path)
+
         async with self._lock:
-            request = DownloadRequest.from_payload(payload)
-            file_hash = self._calculate_file_hash(file_path)
             file_size_mb = request.file_size / (1024 * 1024)
             download_date = request.extra_fields.get("download_date", datetime.now())
             if isinstance(download_date, datetime):
@@ -251,7 +254,7 @@ class FileTracker:
     def _calculate_file_hash(self, file_path: str) -> str:
         hash_md5 = hashlib.md5()
         with open(file_path, "rb") as handle:
-            for chunk in iter(lambda: handle.read(4096), b""):
+            for chunk in iter(lambda: handle.read(HASH_CHUNK_SIZE), b""):
                 hash_md5.update(chunk)
         return hash_md5.hexdigest()
 
@@ -274,13 +277,37 @@ class FileTracker:
         if existing_file:
             file_path = Path(existing_file["file_path"])
             if file_path.exists():
-                return True, f"File already downloaded: {existing_file['file_path']}"
+                incomplete = self._describe_incomplete_file(file_path, existing_file)
+                if incomplete is None:
+                    return True, f"File already downloaded: {existing_file['file_path']}"
 
-            self.logger.warning(
-                f"[WARN] File tracked but missing on disk: {existing_file['file_path']}"
-            )
+                self.logger.warning(
+                    f"[WARN] Tracked file is incomplete, re-downloading: "
+                    f"{existing_file['file_path']} ({incomplete})"
+                )
+            else:
+                self.logger.warning(
+                    f"[WARN] File tracked but missing on disk: {existing_file['file_path']}"
+                )
 
         return False, ""
+
+    def _describe_incomplete_file(
+        self, file_path: Path, existing_file: Dict[str, Any]
+    ) -> Optional[str]:
+        """Describe a truncated tracked file, or None when it holds every expected byte."""
+        expected_size = existing_file.get("file_size")
+        if not isinstance(expected_size, int) or expected_size <= 0:
+            return None
+
+        try:
+            actual_size = file_path.stat().st_size
+        except OSError:
+            return None
+
+        if actual_size >= expected_size:
+            return None
+        return f"{actual_size} of {expected_size} bytes"
 
     def get_statistics(self) -> Dict[str, Any]:
         return {

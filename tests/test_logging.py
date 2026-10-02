@@ -127,9 +127,12 @@ class FakeMonitorCoordinator:
         }
 
 
+DOWNLOAD_PAYLOAD = b"audio-data"
+
+
 class FakeTelegramClient:
     async def download_media(self, _document, file: str):
-        Path(file).write_bytes(b"audio-data")
+        Path(file).write_bytes(DOWNLOAD_PAYLOAD)
         return file
 
 
@@ -491,7 +494,7 @@ class LoggingIntegrationTests(unittest.IsolatedAsyncioTestCase):
             "message_id": 10,
             "channel_id": "-100test",
             "filename": "song.wav",
-            "file_size": 2 * 1024 * 1024,
+            "file_size": len(DOWNLOAD_PAYLOAD),
             "type": "audio",
             "mime_type": "audio/vnd.wave",
             "publish_date": "2026-03-26T08:29:13+00:00",
