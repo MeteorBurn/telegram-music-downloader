@@ -127,9 +127,9 @@ class SessionRunner:
         self.download_monitor = None
         self.channel_processor = None
 
-    async def initialize_client(self):
+    async def initialize_client(self, interactive: bool = True):
         self.logger.info("[INIT] Connecting to Telegram...")
-        self.client = await create_client(self.config)
+        self.client = await create_client(self.config, interactive=interactive)
         await self.client.connect()
         if not self.client.client.is_connected():
             raise RuntimeError("Failed to connect to Telegram")

@@ -49,6 +49,10 @@ except ModuleNotFoundError:
         pass
 
 
+class TelegramNotAuthorizedError(RuntimeError):
+    """The saved Telegram session is not signed in and prompting is disabled."""
+
+
 class TelegramMusicClient:
     def __init__(
         self,
@@ -56,11 +60,13 @@ class TelegramMusicClient:
         api_hash: str,
         session_name: str,
         two_factor_enabled: bool = False,
+        interactive: bool = True,
     ):
         self.api_id = api_id
         self.api_hash = api_hash
         self.session_name = session_name
         self.two_factor_enabled = two_factor_enabled
+        self.interactive = interactive
         self.client: Optional[TelegramClient] = None
         self.logger = get_logger()
 
@@ -74,6 +80,11 @@ class TelegramMusicClient:
             await self.client.connect()
 
             if not await self.client.is_user_authorized():
+                if not self.interactive:
+                    await self.client.disconnect()
+                    raise TelegramNotAuthorizedError(
+                        "Telegram session is not authorized. Sign in first."
+                    )
                 self.logger.info("[AUTH] User not authorized, starting authentication")
                 await self._authenticate()
             else:
@@ -81,6 +92,8 @@ class TelegramMusicClient:
 
             self.logger.info("[AUTH] Successfully connected to Telegram")
             return True
+        except TelegramNotAuthorizedError:
+            raise
         except Exception as exc:
             self.logger.error(f"[FAIL] Failed to connect to Telegram: {exc}")
             return False
@@ -125,12 +138,15 @@ class TelegramMusicClient:
         await self.disconnect()
 
 
-async def create_client(config_loader) -> TelegramMusicClient:
+async def create_client(
+    config_loader, interactive: bool = True
+) -> TelegramMusicClient:
     return TelegramMusicClient(
         api_id=config_loader.get_api_id(),
         api_hash=config_loader.get_api_hash(),
         session_name=config_loader.get_full_session_path(),
         two_factor_enabled=config_loader.is_two_factor_enabled(),
+        interactive=interactive,
     )
 
 
