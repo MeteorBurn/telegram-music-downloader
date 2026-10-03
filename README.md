@@ -413,7 +413,7 @@ such as statistics and summaries can still appear in the terminal.
 | **Nothing downloads** | Check channel access, the date/format/size filters, and the saved checkpoint |
 | **Fewer files than the limit** | The limit counts queued files; check the log for skips, failures and duration rejections |
 | **Could not determine duration** | Make sure `ffprobe` is on `PATH`, then read its error in the log |
-| **Flood or timeout errors** | Lower the worker count or attempt rate; check `[BLACKLIST]` entries |
+| **Flood or timeout errors** | They are transient and never blacklist a file; each download gets up to three attempts. Lower the worker count or attempt rate if they persist |
 | **Files still missing after cleanup** | Cleanup updates records, but does not rescan older messages |
 | **No active session with `--progress`** | This command cannot watch another process; use `--stats` for saved counts |
 
